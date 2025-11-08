@@ -30,8 +30,8 @@ export default function LoginPage() {
     const loadingToast = toast.loading("Signing in...")
 
     try {
-      // First, login to get the token
-      const response = await fetch("http://localhost:5000/api/auth/login", {
+      // Use the admin login endpoint
+      const response = await fetch("http://localhost:5000/api/admin/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -43,17 +43,6 @@ export default function LoginPage() {
 
       if (!response.ok) {
         throw new Error(data.message || "Login failed")
-      }
-
-      // Verify admin access by calling admin dashboard endpoint
-      const dashboardResponse = await fetch("http://localhost:5000/api/admin/dashboard", {
-        headers: {
-          Authorization: `Bearer ${data.token}`,
-        },
-      })
-
-      if (!dashboardResponse.ok) {
-        throw new Error("Unauthorized: You do not have admin permissions")
       }
 
       // Store auth via context (also saves to localStorage)

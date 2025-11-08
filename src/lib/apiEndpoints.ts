@@ -2,6 +2,10 @@ import api from './api';
 
 // Admin Dashboard
 export const adminAPI = {
+  // Admin Auth
+  login: (email: string, password: string) => 
+    api.post('/admin/login', { email, password }),
+  
   // Get dashboard stats
   getDashboard: () => api.get('/admin/dashboard'),
   
