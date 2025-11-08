@@ -19,7 +19,10 @@ import {
   Users,
   Eye,
   EyeOff,
-  Clock
+  Clock,
+  CheckCircle,
+  XCircle,
+  AlertCircle
 } from "lucide-react"
 
 interface Event {
@@ -29,10 +32,17 @@ interface Event {
   date: string
   location: string
   price: number
-  capacity?: number
-  bookings?: number
-  status: "published" | "draft" | "cancelled"
+  ticketsAvailable: number
+  ticketsSold?: number
+  status: "upcoming" | "ongoing" | "completed" | "cancelled"
+  approvalStatus: "pending" | "approved" | "rejected"
+  organizer: {
+    _id: string
+    name: string
+    email: string
+  }
   image?: string
+  category?: string
   createdAt: string
 }
 
@@ -76,11 +86,33 @@ export default function EventsPage() {
     }
   }
 
+  const handleApprove = async (id: string) => {
+    try {
+      await adminAPI.approveEvent(id)
+      toast.success("Event approved successfully")
+      fetchEvents()
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Failed to approve event")
+    }
+  }
+
+  const handleReject = async (id: string) => {
+    if (!confirm("Are you sure you want to reject this event?")) return
+    
+    try {
+      await adminAPI.rejectEvent(id)
+      toast.success("Event rejected")
+      fetchEvents()
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Failed to reject event")
+    }
+  }
+
   const handleToggleStatus = async (event: Event) => {
-    const newStatus = event.status === "published" ? "draft" : "published"
+    const newStatus = event.status === "upcoming" ? "cancelled" : "upcoming"
     try {
       await adminAPI.updateEvent(event._id, { status: newStatus })
-      toast.success(`Event ${newStatus === "published" ? "published" : "unpublished"}`)
+      toast.success(`Event status updated`)
       fetchEvents()
     } catch (err: any) {
       toast.error("Failed to update event status")
@@ -94,16 +126,17 @@ export default function EventsPage() {
 
   const filteredEvents = events.filter(event => {
     const matchesSearch = event.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         event.location.toLowerCase().includes(searchTerm.toLowerCase())
-    const matchesStatus = statusFilter === "all" || event.status === statusFilter
+                         event.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         event.organizer?.name.toLowerCase().includes(searchTerm.toLowerCase())
+    const matchesStatus = statusFilter === "all" || event.approvalStatus === statusFilter
     return matchesSearch && matchesStatus
   })
 
   const stats = {
     total: events.length,
-    published: events.filter(e => e.status === "published").length,
-    draft: events.filter(e => e.status === "draft").length,
-    upcoming: events.filter(e => new Date(e.date) > new Date()).length
+    approved: events.filter(e => e.approvalStatus === "approved").length,
+    pending: events.filter(e => e.approvalStatus === "pending").length,
+    upcoming: events.filter(e => new Date(e.date) > new Date() && e.status === "upcoming").length
   }
 
   if (loading) {
@@ -146,8 +179,8 @@ export default function EventsPage() {
           {/* Stats */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <StatCard title="Total Events" value={stats.total} color="bg-blue-500" />
-            <StatCard title="Published" value={stats.published} color="bg-green-500" />
-            <StatCard title="Drafts" value={stats.draft} color="bg-yellow-500" />
+            <StatCard title="Approved" value={stats.approved} color="bg-green-500" />
+            <StatCard title="Pending" value={stats.pending} color="bg-yellow-500" />
             <StatCard title="Upcoming" value={stats.upcoming} color="bg-purple-500" />
           </div>
 
@@ -170,9 +203,9 @@ export default function EventsPage() {
                 className="px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               >
                 <option value="all">All Status</option>
-                <option value="published">Published</option>
-                <option value="draft">Draft</option>
-                <option value="cancelled">Cancelled</option>
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
               </select>
             </div>
           </div>
@@ -209,15 +242,18 @@ export default function EventsPage() {
                           {event.title}
                         </h3>
                         <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
-                          event.status === 'published' ? 'bg-green-500/10 text-green-500' :
-                          event.status === 'draft' ? 'bg-yellow-500/10 text-yellow-500' :
+                          event.approvalStatus === 'approved' ? 'bg-green-500/10 text-green-500' :
+                          event.approvalStatus === 'pending' ? 'bg-yellow-500/10 text-yellow-500' :
                           'bg-red-500/10 text-red-500'
                         }`}>
-                          {event.status}
+                          {event.approvalStatus}
                         </span>
                       </div>
                       <p className="text-sm text-muted-foreground line-clamp-2">
                         {event.description}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        by {event.organizer.name}
                       </p>
                     </div>
 
@@ -234,15 +270,31 @@ export default function EventsPage() {
                         <DollarSign className="h-4 w-4" />
                         ${event.price}
                       </div>
-                      {event.capacity && (
-                        <div className="flex items-center gap-2">
-                          <Users className="h-4 w-4" />
-                          {event.bookings || 0} / {event.capacity} booked
-                        </div>
-                      )}
+                      <div className="flex items-center gap-2">
+                        <Users className="h-4 w-4" />
+                        {event.ticketsSold || 0} / {event.ticketsAvailable} tickets sold
+                      </div>
                     </div>
 
                     <div className="flex gap-2 pt-2">
+                      {event.approvalStatus === 'pending' && (
+                        <>
+                          <button
+                            onClick={() => handleApprove(event._id)}
+                            className="px-3 py-2 text-sm bg-green-500/10 text-green-500 rounded-lg hover:bg-green-500/20 transition flex items-center justify-center gap-1"
+                            title="Approve event"
+                          >
+                            <CheckCircle className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => handleReject(event._id)}
+                            className="px-3 py-2 text-sm bg-red-500/10 text-red-500 rounded-lg hover:bg-red-500/20 transition flex items-center justify-center gap-1"
+                            title="Reject event"
+                          >
+                            <XCircle className="h-4 w-4" />
+                          </button>
+                        </>
+                      )}
                       <button
                         onClick={() => handleEdit(event)}
                         className="flex-1 px-3 py-2 text-sm bg-primary/10 text-primary rounded-lg hover:bg-primary/20 transition flex items-center justify-center gap-2"
@@ -254,15 +306,15 @@ export default function EventsPage() {
                         onClick={() => handleToggleStatus(event)}
                         className="flex-1 px-3 py-2 text-sm bg-secondary/10 text-secondary rounded-lg hover:bg-secondary/20 transition flex items-center justify-center gap-2"
                       >
-                        {event.status === "published" ? (
+                        {event.status === "upcoming" ? (
                           <>
                             <EyeOff className="h-4 w-4" />
-                            Hide
+                            Cancel
                           </>
                         ) : (
                           <>
                             <Eye className="h-4 w-4" />
-                            Publish
+                            Activate
                           </>
                         )}
                       </button>
@@ -327,8 +379,8 @@ function EventModal({
     date: event?.date ? new Date(event.date).toISOString().slice(0, 16) : "",
     location: event?.location || "",
     price: event?.price || 0,
-    capacity: event?.capacity || 100,
-    status: event?.status || "draft"
+    ticketsAvailable: event?.ticketsAvailable || 100,
+    status: event?.status || "upcoming"
   })
   const [loading, setLoading] = useState(false)
 
@@ -434,12 +486,12 @@ function EventModal({
 
             <div>
               <label className="block text-sm font-medium text-foreground mb-2">
-                Capacity
+                Tickets Available
               </label>
               <input
                 type="number"
-                value={formData.capacity}
-                onChange={(e) => setFormData({ ...formData, capacity: Number(e.target.value) })}
+                value={formData.ticketsAvailable}
+                onChange={(e) => setFormData({ ...formData, ticketsAvailable: Number(e.target.value) })}
                 min="1"
                 className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 required
@@ -455,8 +507,9 @@ function EventModal({
                 onChange={(e) => setFormData({ ...formData, status: e.target.value as any })}
                 className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               >
-                <option value="draft">Draft</option>
-                <option value="published">Published</option>
+                <option value="upcoming">Upcoming</option>
+                <option value="ongoing">Ongoing</option>
+                <option value="completed">Completed</option>
                 <option value="cancelled">Cancelled</option>
               </select>
             </div>

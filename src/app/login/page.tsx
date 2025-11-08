@@ -3,8 +3,10 @@
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import toast from "react-hot-toast"
-import { Loader2 } from "lucide-react"
 import { useAuth } from "@/contexts/auth-context"
+import { Card, CardHeader, CardContent, CardFooter } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
@@ -73,79 +75,68 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="w-full max-w-md p-8 bg-card rounded-lg border border-border shadow-lg">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-br from-primary to-secondary mb-4">
-            <span className="text-primary-foreground font-bold text-2xl">M</span>
-          </div>
-          <h1 className="text-3xl font-bold bg-linear-to-r from-primary to-secondary bg-clip-text text-transparent">
-            MyScope Admin
-          </h1>
-          <p className="text-muted-foreground mt-2">
-            Sign in to access the admin panel
-          </p>
-        </div>
-
-        {/* Login Form */}
-        <form onSubmit={handleLogin} className="space-y-6">
-          {error && (
-            <div className="bg-destructive/10 border border-destructive/50 text-destructive px-4 py-3 rounded-lg text-sm">
-              {error}
+    <div className="min-h-screen flex items-center justify-center bg-background px-4">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          {/* Logo */}
+          <div className="text-center mb-2">
+            <div className="inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-br from-primary to-secondary mb-4">
+              <span className="text-primary-foreground font-bold text-2xl">M</span>
             </div>
-          )}
+            <h1 className="text-3xl font-bold bg-linear-to-r from-primary to-secondary bg-clip-text text-transparent">
+              MyScope Admin
+            </h1>
+            <p className="text-muted-foreground mt-2">
+              Sign in to access the admin panel
+            </p>
+          </div>
+        </CardHeader>
 
-          <div>
-            <label
-              htmlFor="email"
-              className="block text-sm font-medium text-foreground mb-2"
-            >
-              Email Address
-            </label>
-            <input
-              id="email"
+        <CardContent>
+          {/* Login Form */}
+          <form onSubmit={handleLogin} className="space-y-6">
+            {error && (
+              <div className="bg-destructive/10 border border-destructive/50 text-destructive px-4 py-3 rounded-lg text-sm">
+                {error}
+              </div>
+            )}
+
+            <Input
+              label="Email Address"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              required
-              className="w-full px-4 py-3 bg-background border border-input rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring transition"
               placeholder="admin@myscope.com"
+              required
+              autoComplete="email"
             />
-          </div>
 
-          <div>
-            <label
-              htmlFor="password"
-              className="block text-sm font-medium text-foreground mb-2"
-            >
-              Password
-            </label>
-            <input
-              id="password"
+            <Input
+              label="Password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              required
-              className="w-full px-4 py-3 bg-background border border-input rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring transition"
               placeholder="••••••••"
+              required
+              autoComplete="current-password"
             />
-          </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3 px-4 bg-linear-to-r from-primary to-secondary text-primary-foreground font-semibold rounded-lg hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-ring transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
-          >
-            {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {loading ? "Signing in..." : "Sign In"}
-          </button>
-        </form>
+            <Button
+              type="submit"
+              className="w-full"
+              loading={loading}
+            >
+              {loading ? "Signing in..." : "Sign In"}
+            </Button>
+          </form>
+        </CardContent>
 
-        <div className="mt-6 text-center text-sm text-muted-foreground">
-          <p>Only authorized administrators can access this panel</p>
-        </div>
-      </div>
+        <CardFooter>
+          <p className="w-full text-center text-sm text-muted-foreground">
+            Only authorized administrators can access this panel
+          </p>
+        </CardFooter>
+      </Card>
     </div>
   )
 }

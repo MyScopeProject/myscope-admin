@@ -76,8 +76,12 @@ export default function UsersPage() {
   }
 
   const handleBanUser = async (userId: string) => {
+    if (!confirm("Are you sure you want to ban this user?")) {
+      return
+    }
+    
     try {
-      await adminAPI.updateUser(userId, { status: "banned" })
+      await adminAPI.banUser(userId)
       toast.success("User banned successfully")
       fetchUsers()
     } catch (err: any) {
@@ -87,11 +91,25 @@ export default function UsersPage() {
 
   const handleUnbanUser = async (userId: string) => {
     try {
-      await adminAPI.updateUser(userId, { status: "active" })
+      await adminAPI.unbanUser(userId)
       toast.success("User unbanned successfully")
       fetchUsers()
     } catch (err: any) {
       toast.error(err.response?.data?.message || "Failed to unban user")
+    }
+  }
+
+  const handlePromoteToModerator = async (userId: string) => {
+    if (!confirm("Promote this user to Content Manager role?")) {
+      return
+    }
+    
+    try {
+      await adminAPI.updateUser(userId, { role: "content-manager" })
+      toast.success("User promoted to Content Manager")
+      fetchUsers()
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Failed to promote user")
     }
   }
 
@@ -296,6 +314,15 @@ export default function UsersPage() {
                             >
                               <Edit className="h-4 w-4" />
                             </button>
+                            {user.role === 'user' && (
+                              <button
+                                onClick={() => handlePromoteToModerator(user._id)}
+                                className="p-2 text-purple-500 hover:bg-purple-500/10 rounded-lg transition"
+                                title="Promote to Moderator"
+                              >
+                                <CheckCircle2 className="h-4 w-4" />
+                              </button>
+                            )}
                             {user.status === 'banned' ? (
                               <button
                                 onClick={() => handleUnbanUser(user._id)}

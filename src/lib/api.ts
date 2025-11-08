@@ -57,7 +57,7 @@ api.interceptors.response.use(
           
         case 404:
           // Not found
-          console.error('Resource not found:', data.message);
+          console.warn('Resource not found:', data.message);
           break;
           
         case 500:
