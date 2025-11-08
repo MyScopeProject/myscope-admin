@@ -105,10 +105,10 @@ export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
 
 // Route access control
 export const ROUTE_ACCESS: Record<string, UserRole[]> = {
-  // Dashboard - all admin roles
-  '/': ['superadmin', 'content-manager', 'event-manager', 'moderator', 'support'],
+  // Dashboard - all admin roles can access
+  '/dashboard': ['superadmin', 'content-manager', 'event-manager', 'moderator', 'support'],
   
-  // User Management - superadmin, moderator
+  // User Management - superadmin, moderator, support
   '/users': ['superadmin', 'moderator', 'support'],
   
   // Event Management
@@ -122,6 +122,9 @@ export const ROUTE_ACCESS: Record<string, UserRole[]> = {
   
   // Shows Management
   '/shows': ['superadmin', 'content-manager'],
+  
+  // Activity Logs - all admin roles can view their own activity, superadmin can view all
+  '/logs': ['superadmin', 'content-manager', 'event-manager', 'moderator', 'support'],
   
   // Settings - superadmin only
   '/settings': ['superadmin'],

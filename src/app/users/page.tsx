@@ -51,7 +51,8 @@ export default function UsersPage() {
     try {
       setLoading(true)
       const response = await adminAPI.getUsers()
-      setUsers(response.data.users || response.data || [])
+      // Backend returns response.data.data.users
+      setUsers(response.data?.data?.users || [])
       setError(null)
     } catch (err: any) {
       setError(err.response?.data?.message || "Failed to load users")

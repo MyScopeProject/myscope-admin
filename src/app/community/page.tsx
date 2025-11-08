@@ -45,7 +45,7 @@ interface Post {
     reason: string
     createdAt: string
   }>
-  author: {
+  author?: {
     _id: string
     name: string
     email: string
@@ -71,7 +71,8 @@ export default function CommunityPage() {
     try {
       setLoading(true)
       const response = await adminAPI.getPosts()
-      setPosts(response.data.data)
+      // Backend returns response.data.data as the posts array directly
+      setPosts(response.data?.data || [])
       setError("")
     } catch (err: any) {
       console.error("Error fetching posts:", err)
@@ -122,7 +123,7 @@ export default function CommunityPage() {
   const filteredPosts = posts.filter(post => {
     const matchesSearch = 
       post.content.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      post.author.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      post.author?.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       post.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase()))
 
     return matchesSearch
@@ -190,12 +191,12 @@ export default function CommunityPage() {
                     <div className="flex items-center gap-3">
                       <div className="h-10 w-10 rounded-full bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center">
                         <span className="text-sm font-semibold text-foreground">
-                          {post.author.name.charAt(0).toUpperCase()}
+                          {post.author?.name?.charAt(0).toUpperCase() || '?'}
                         </span>
                       </div>
                       <div>
-                        <p className="font-medium text-foreground">{post.author.name}</p>
-                        <p className="text-xs text-muted-foreground">{post.author.email}</p>
+                        <p className="font-medium text-foreground">{post.author?.name || 'Unknown User'}</p>
+                        <p className="text-xs text-muted-foreground">{post.author?.email || 'N/A'}</p>
                         <p className="text-xs text-muted-foreground">
                           {new Date(post.createdAt).toLocaleString()}
                         </p>
@@ -257,7 +258,7 @@ export default function CommunityPage() {
                       {post.pinned ? "Unpin" : "Pin"}
                     </button>
                     <button
-                      onClick={() => handleBanAuthor(post._id, post.author.name)}
+                      onClick={() => handleBanAuthor(post._id, post.author?.name || 'Unknown User')}
                       className="flex items-center gap-2 px-3 py-2 text-sm bg-yellow-500/10 text-yellow-600 rounded-lg hover:bg-yellow-500/20 transition"
                       title="Ban author"
                     >

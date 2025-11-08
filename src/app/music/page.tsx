@@ -35,7 +35,7 @@ interface Music {
   plays: number
   featured: boolean
   approvalStatus: "pending" | "approved" | "rejected"
-  uploadedBy: {
+  uploadedBy?: {
     _id: string
     name: string
     email: string
@@ -62,7 +62,8 @@ export default function MusicPage() {
     try {
       setLoading(true)
       const response = await adminAPI.getMusic()
-      setMusic(response.data.data)
+      // Backend returns response.data.data as the music array directly
+      setMusic(response.data?.data || [])
       setError("")
     } catch (err: any) {
       console.error("Error fetching music:", err)
@@ -134,7 +135,7 @@ export default function MusicPage() {
       track.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       track.artist.toLowerCase().includes(searchTerm.toLowerCase()) ||
       track.album?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      track.uploadedBy.name.toLowerCase().includes(searchTerm.toLowerCase())
+      track.uploadedBy?.name.toLowerCase().includes(searchTerm.toLowerCase())
 
     const matchesGenre = !genreFilter || track.genre === genreFilter
     const matchesStatus = !statusFilter || track.approvalStatus === statusFilter
@@ -278,8 +279,8 @@ export default function MusicPage() {
                           </span>
                         </td>
                         <td className="px-6 py-4">
-                          <p className="text-sm text-foreground">{track.uploadedBy.name}</p>
-                          <p className="text-xs text-muted-foreground">{track.uploadedBy.email}</p>
+                          <p className="text-sm text-foreground">{track.uploadedBy?.name || 'Unknown'}</p>
+                          <p className="text-xs text-muted-foreground">{track.uploadedBy?.email || 'N/A'}</p>
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3 text-xs text-muted-foreground">

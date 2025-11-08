@@ -36,7 +36,7 @@ interface Event {
   ticketsSold?: number
   status: "upcoming" | "ongoing" | "completed" | "cancelled"
   approvalStatus: "pending" | "approved" | "rejected"
-  organizer: {
+  organizer?: {
     _id: string
     name: string
     email: string
@@ -64,7 +64,8 @@ export default function EventsPage() {
     try {
       setLoading(true)
       const response = await adminAPI.getEvents()
-      setEvents(response.data.events || response.data || [])
+      // Backend returns response.data.data.events
+      setEvents(response.data?.data?.events || [])
       setError(null)
     } catch (err: any) {
       setError(err.response?.data?.message || "Failed to load events")
@@ -253,7 +254,7 @@ export default function EventsPage() {
                         {event.description}
                       </p>
                       <p className="text-xs text-muted-foreground mt-1">
-                        by {event.organizer.name}
+                        by {event.organizer?.name || 'Unknown Organizer'}
                       </p>
                     </div>
 

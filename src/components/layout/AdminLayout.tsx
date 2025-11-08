@@ -4,6 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useAuth } from "@/contexts/auth-context"
+import { canAccessRoute } from "@/lib/rbac"
 import { 
   LayoutDashboard, 
   Users, 
@@ -15,7 +16,8 @@ import {
   Menu,
   X,
   LogOut,
-  ChevronLeft
+  ChevronLeft,
+  ScrollText
 } from "lucide-react"
 import { ThemeToggle } from "../ui/theme-toggle"
 
@@ -25,13 +27,14 @@ interface NavItem {
   icon: React.ElementType
 }
 
-const navItems: NavItem[] = [
+const allNavItems: NavItem[] = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "Users", href: "/users", icon: Users },
   { name: "Events", href: "/events", icon: Calendar },
   { name: "Music", href: "/music", icon: Music },
   { name: "Community", href: "/community", icon: MessageSquare },
   { name: "Shows", href: "/shows", icon: Film },
+  { name: "Activity Logs", href: "/logs", icon: ScrollText },
   { name: "Settings", href: "/settings", icon: Settings },
 ]
 
@@ -49,6 +52,19 @@ export function AdminLayout({ children, user }: AdminLayoutProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false)
   const pathname = usePathname()
   const { logout } = useAuth()
+
+  // Filter navigation items based on user's role
+  const navItems = React.useMemo(() => {
+    if (!user?.role) return []
+    
+    return allNavItems.filter(item => {
+      // Dashboard is accessible to all admin roles
+      if (item.href === '/dashboard') return true
+      
+      // Check if user can access this route
+      return canAccessRoute(user.role, item.href)
+    })
+  }, [user?.role])
 
   const handleLogout = () => {
     logout()

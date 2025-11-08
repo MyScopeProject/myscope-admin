@@ -36,7 +36,7 @@ interface Show {
   featured: boolean
   videoUrl?: string
   thumbnail?: string
-  uploadedBy: {
+  uploadedBy?: {
     _id: string
     name: string
     email: string
@@ -64,7 +64,8 @@ export default function ShowsPage() {
     try {
       setLoading(true)
       const response = await adminAPI.getShows()
-      setShows(response.data.data)
+      // Backend returns response.data.data as the shows array directly
+      setShows(response.data?.data || [])
       setError("")
     } catch (err: any) {
       console.error("Error fetching shows:", err)
@@ -133,7 +134,7 @@ export default function ShowsPage() {
     const matchesSearch = 
       show.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       show.venue.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      show.uploadedBy.name.toLowerCase().includes(searchTerm.toLowerCase())
+      show.uploadedBy?.name.toLowerCase().includes(searchTerm.toLowerCase())
 
     const matchesStatus = !statusFilter || show.status === statusFilter
 
