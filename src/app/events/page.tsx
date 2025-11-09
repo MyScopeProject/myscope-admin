@@ -394,8 +394,10 @@ function EventModal({
         await adminAPI.updateEvent(event._id, formData)
         toast.success("Event updated successfully")
       } else {
-        await adminAPI.createEvent(formData)
-        toast.success("Event created successfully")
+        const response = await adminAPI.createEvent(formData)
+        // Show the message from backend (different for event managers vs admins)
+        const message = response.data?.message || "Event created successfully"
+        toast.success(message)
       }
       onSuccess()
     } catch (err: any) {
