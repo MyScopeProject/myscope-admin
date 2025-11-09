@@ -128,7 +128,9 @@ export default function UsersPage() {
 
   const stats = {
     total: users.length,
-    admins: users.filter(u => u.role !== "user").length,
+    artists: users.filter(u => u.role === "artist").length,
+    moderators: users.filter(u => u.role === "moderator").length,
+    admins: users.filter(u => ["superadmin", "event-manager", "content-manager", "support"].includes(u.role)).length,
     active: users.filter(u => u.status !== "banned").length,
     banned: users.filter(u => u.status === "banned").length
   }
@@ -168,8 +170,10 @@ export default function UsersPage() {
           </div>
 
           {/* Stats Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
             <StatCard title="Total Users" value={stats.total} color="bg-blue-500" />
+            <StatCard title="Artists" value={stats.artists} color="bg-pink-500" />
+            <StatCard title="Moderators" value={stats.moderators} color="bg-orange-500" />
             <StatCard title="Admins" value={stats.admins} color="bg-purple-500" />
             <StatCard title="Active" value={stats.active} color="bg-green-500" />
             <StatCard title="Banned" value={stats.banned} color="bg-red-500" />
@@ -197,6 +201,8 @@ export default function UsersPage() {
                 >
                   <option value="all">All Roles</option>
                   <option value="user">Users</option>
+                  <option value="artist">Artists</option>
+                  <option value="moderator">Moderators</option>
                   <option value="superadmin">Super Admin</option>
                   <option value="event-manager">Event Manager</option>
                   <option value="content-manager">Content Manager</option>
@@ -282,6 +288,8 @@ export default function UsersPage() {
                         <td className="px-6 py-4 whitespace-nowrap">
                           <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                             user.role === 'superadmin' ? 'bg-purple-500/10 text-purple-500' :
+                            user.role === 'artist' ? 'bg-pink-500/10 text-pink-500' :
+                            user.role === 'moderator' ? 'bg-orange-500/10 text-orange-500' :
                             user.role === 'event-manager' ? 'bg-blue-500/10 text-blue-500' :
                             user.role === 'content-manager' ? 'bg-green-500/10 text-green-500' :
                             user.role === 'support' ? 'bg-yellow-500/10 text-yellow-500' :
@@ -494,6 +502,8 @@ function UserModal({
               className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             >
               <option value="user">User</option>
+              <option value="artist">Artist</option>
+              <option value="moderator">Moderator</option>
               <option value="superadmin">Super Admin</option>
               <option value="event-manager">Event Manager</option>
               <option value="content-manager">Content Manager</option>
