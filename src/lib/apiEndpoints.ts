@@ -5,8 +5,8 @@ export const adminAPI = {
   // Admin Auth
   login: (email: string, password: string) =>
     api.post('/admin/login', { email, password }),
-  googleLogin: (credential: string) =>
-    api.post('/admin/google', { token: credential }),
+  googleLogin: (credential: string, isAccessToken = false) =>
+    api.post('/admin/google', isAccessToken ? { accessToken: credential } : { token: credential }),
   
   // Get dashboard stats
   getDashboard: () => api.get('/admin/dashboard'),
