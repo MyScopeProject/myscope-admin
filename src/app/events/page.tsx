@@ -12,6 +12,7 @@ import toast from "react-hot-toast"
 import {
   AlertTriangle,
   Calendar,
+  Eye,
   Search,
   MapPin,
   DollarSign,
@@ -206,6 +207,8 @@ export default function EventsPage() {
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
+                title="Filter by approval status"
+                aria-label="Filter by approval status"
                 className="px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               >
                 <option value="all">All Status</option>
@@ -306,7 +309,14 @@ export default function EventsPage() {
                         </div>
                       )}
 
-                      <div className="pt-2 border-t border-border">
+                      <div className="pt-2 border-t border-border space-y-2">
+                        <Link
+                          href={`/events/${event.id}`}
+                          className="w-full px-3 py-2 text-sm bg-primary/10 text-primary rounded-md hover:bg-primary/20 transition flex items-center justify-center gap-1.5 font-medium"
+                        >
+                          <Eye className="h-4 w-4" />
+                          Review details
+                        </Link>
                         <button
                           type="button"
                           onClick={() => openDelete(event)}
