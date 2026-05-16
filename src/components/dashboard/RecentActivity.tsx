@@ -15,10 +15,8 @@ import {
   XCircleIcon,
   AlertTriangleIcon,
   InfoIcon,
-  ArrowRightIcon,
   RefreshCwIcon,
 } from 'lucide-react';
-import Link from 'next/link';
 
 interface AdminLog {
   id: string;
@@ -168,14 +166,6 @@ export default function RecentActivity() {
           >
             <RefreshCwIcon className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
           </button>
-          <Link
-            href="/logs"
-            className="flex items-center gap-1 text-sm font-medium"
-            style={{ color: "#B794F6" }}
-          >
-            View All
-            <ArrowRightIcon className="w-4 h-4" />
-          </Link>
         </div>
       </div>
 
@@ -315,18 +305,6 @@ export default function RecentActivity() {
         )}
       </div>
 
-      {/* Footer - Show more link if there are logs */}
-      {logs.length > 0 && (
-        <div className="mt-4 pt-4" style={{ borderTop: "1px solid rgba(196, 181, 253, 0.10)" }}>
-          <Link
-            href="/logs"
-            className="block text-center text-sm font-medium"
-            style={{ color: "#B794F6" }}
-          >
-            View all activity logs →
-          </Link>
-        </div>
-      )}
     </div>
   );
 }

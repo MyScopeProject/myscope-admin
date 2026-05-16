@@ -124,18 +124,9 @@ export const ROUTE_ACCESS: Record<string, UserRole[]> = {
   '/payouts': ['superadmin', 'event-manager'],
   '/reports': ['superadmin'],
   
-  // Music Management
-  '/music': ['superadmin', 'content-manager'],
-  
-  // Community Management
-  '/community': ['superadmin', 'content-manager', 'moderator'],
-  
-  // Shows Management
-  '/shows': ['superadmin', 'content-manager'],
-  
-  // Activity Logs - all admin roles can view their own activity, superadmin can view all
-  '/logs': ['superadmin', 'content-manager', 'event-manager', 'moderator', 'support'],
-  
+  // Movies Management
+  '/movies': ['superadmin', 'content-manager'],
+
   // Settings - superadmin only
   '/settings': ['superadmin'],
   

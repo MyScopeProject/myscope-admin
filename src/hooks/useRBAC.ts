@@ -101,9 +101,7 @@ export function useRouteAccess() {
     canAccessDashboard: canAccessRoute('/'),
     canAccessUsers: canAccessRoute('/users'),
     canAccessEvents: canAccessRoute('/events'),
-    canAccessMusic: canAccessRoute('/music'),
-    canAccessCommunity: canAccessRoute('/community'),
-    canAccessShows: canAccessRoute('/shows'),
+    canAccessMovies: canAccessRoute('/movies'),
     canAccessSettings: canAccessRoute('/settings'),
     canAccessAnalytics: canAccessRoute('/analytics')
   }

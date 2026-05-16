@@ -22,49 +22,26 @@ export const adminAPI = {
   unbanUser: (id: string) => api.put(`/admin/users/${id}/unban`),
   deleteUser: (id: string) => api.delete(`/admin/users/${id}`),
   
-  // Event Management
-  getEvents: (params?: { page?: number; limit?: number; search?: string; status?: string; approvalStatus?: string }) => 
+  // Event Management — backend only supports list/get/approve/reject. Create
+  // and edits live with the organizer flow (organizer dashboard / API).
+  getEvents: (params?: { page?: number; limit?: number; search?: string; status?: string; approvalStatus?: string }) =>
     api.get('/admin/events', { params }),
   getEventById: (id: string) => api.get(`/admin/events/${id}`),
-  createEvent: (data: any) => api.post('/admin/events', data),
-  updateEvent: (id: string, data: any) => api.put(`/admin/events/${id}`, data),
   approveEvent: (id: string) => api.post(`/admin/events/${id}/approve`),
   rejectEvent: (id: string, reason: string) =>
     api.post(`/admin/events/${id}/reject`, { reason }),
   getEventForReview: (id: string) => api.get(`/admin/events/${id}`),
-  deleteEvent: (id: string) => api.delete(`/admin/events/${id}`),
   
-  // Music Management
-  getMusic: (params?: { page?: number; limit?: number; search?: string; genre?: string; approvalStatus?: string; featured?: string }) => 
-    api.get('/admin/music', { params }),
-  getMusicById: (id: string) => api.get(`/admin/music/${id}`),
-  createMusic: (data: any) => api.post('/admin/music', data),
-  updateMusic: (id: string, data: any) => api.put(`/admin/music/${id}`, data),
-  approveMusic: (id: string) => api.put(`/admin/music/${id}/approve`),
-  rejectMusic: (id: string) => api.put(`/admin/music/${id}/reject`),
-  toggleFeatured: (id: string) => api.put(`/admin/music/${id}/toggle-featured`),
-  deleteMusic: (id: string) => api.delete(`/admin/music/${id}`),
-  
-  // Community Management
-  getPosts: (params?: { page?: number; limit?: number; search?: string; author?: string }) => 
-    api.get('/admin/community', { params }),
-  getPostById: (id: string) => api.get(`/admin/community/${id}`),
-  deletePost: (id: string) => api.delete(`/admin/community/${id}`),
-  togglePinPost: (id: string) => api.put(`/admin/community/${id}/pin`),
-  deleteComment: (postId: string, commentId: string) => api.delete(`/admin/community/${postId}/comments/${commentId}`),
-  banPostAuthor: (id: string) => api.post(`/admin/community/${id}/ban-author`),
-  
-  // Shows Management
-  getShows: (params?: { page?: number; limit?: number; search?: string; status?: string; category?: string; featured?: string }) => 
-    api.get('/admin/shows', { params }),
-  getShowById: (id: string) => api.get(`/admin/shows/${id}`),
-  createShow: (data: any) => api.post('/admin/shows', data),
-  updateShow: (id: string, data: any) => api.put(`/admin/shows/${id}`, data),
-  cancelShow: (id: string) => api.put(`/admin/shows/${id}/cancel`),
-  rescheduleShow: (id: string, date: string) => api.put(`/admin/shows/${id}/reschedule`, { date }),
-  toggleFeaturedShow: (id: string) => api.put(`/admin/shows/${id}/toggle-featured`),
-  deleteShow: (id: string) => api.delete(`/admin/shows/${id}`),
-  
+  // Movies Management
+  getMovies: (params?: { page?: number; limit?: number; search?: string; genre?: string; status?: string; featured?: string }) =>
+    api.get('/admin/movies', { params }),
+  getMovieById: (id: string) => api.get(`/admin/movies/${id}`),
+  createMovie: (data: any) => api.post('/admin/movies', data),
+  updateMovie: (id: string, data: any) => api.put(`/admin/movies/${id}`, data),
+  toggleMovieFeatured: (id: string) => api.put(`/admin/movies/${id}/toggle-featured`),
+  deleteMovie: (id: string) => api.delete(`/admin/movies/${id}`),
+
+
   // Settings Management
   getSettings: () => api.get('/admin/settings'),
   updateSiteConfig: (data: any) => api.put('/admin/settings/site-config', data),

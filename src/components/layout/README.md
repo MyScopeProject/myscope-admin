@@ -87,11 +87,14 @@ The sidebar includes these routes:
 
 1. **Dashboard** - `/dashboard` - Overview and statistics
 2. **Users** - `/users` - User management
-3. **Events** - `/events` - Event management
-4. **Music** - `/music` - Music content management
-5. **Community** - `/community` - Community posts
-6. **Shows** - `/shows` - Shows/video content
-7. **Settings** - `/settings` - Admin settings
+3. **Organizers** - `/organizers` - Organizer application review
+4. **Events** - `/events` - Event management
+5. **Event Review** - `/events/review` - Event approval queue
+6. **Movies** - `/movies` - Movie content management
+7. **Payouts** - `/payouts` - Organizer payouts
+8. **Finance Reports** - `/reports` - Revenue & fee reporting
+9. **Activity Logs** - `/logs` - Admin activity audit
+10. **Settings** - `/settings` - Admin settings
 
 ## Responsive Behavior
 

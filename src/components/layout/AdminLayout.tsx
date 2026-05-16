@@ -16,7 +16,6 @@ import {
   X,
   LogOut,
   ChevronLeft,
-  ScrollText,
   Building2,
   Banknote,
   BarChart3,
@@ -38,7 +37,6 @@ const allNavItems: NavItem[] = [
   { name: "Movies", href: "/movies", icon: Film },
   { name: "Payouts", href: "/payouts", icon: Banknote },
   { name: "Finance Reports", href: "/reports", icon: BarChart3 },
-  { name: "Activity Logs", href: "/logs", icon: ScrollText },
   { name: "Settings", href: "/settings", icon: Settings },
 ]
 
