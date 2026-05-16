@@ -154,27 +154,27 @@ export default function ReportsPage() {
                   label="Gross revenue"
                   value={`LKR ${data.summary.gross_revenue.toLocaleString()}`}
                   sub={`${data.summary.booking_count} confirmed bookings`}
-                  color="#10b981"
+                  tone="success"
                 />
                 <SummaryCard
                   icon={<Receipt className="w-5 h-5" />}
                   label={`Platform fee (${(data.summary.platform_fee_pct * 100).toFixed(1)}%)`}
                   value={`LKR ${data.summary.platform_fee.toLocaleString()}`}
-                  color="#A78BFA"
+                  tone="primary"
                 />
                 <SummaryCard
                   icon={<TrendingDown className="w-5 h-5" />}
                   label="Refunds"
                   value={`LKR ${data.summary.refunds.toLocaleString()}`}
                   sub={`${data.summary.refund_count} refund${data.summary.refund_count === 1 ? "" : "s"}`}
-                  color="#ef4444"
+                  tone="destructive"
                 />
                 <SummaryCard
                   icon={<Banknote className="w-5 h-5" />}
                   label="Payouts disbursed"
                   value={`LKR ${data.summary.payouts_disbursed.toLocaleString()}`}
                   sub={`${data.summary.payout_count} payout${data.summary.payout_count === 1 ? "" : "s"}`}
-                  color="#FB923C"
+                  tone="warning"
                 />
               </div>
 
@@ -216,7 +216,7 @@ export default function ReportsPage() {
                             <td className="px-4 py-3 font-medium">{e.title}</td>
                             <td className="px-4 py-3">{e.bookings}</td>
                             <td className="px-4 py-3">LKR {e.gross.toLocaleString()}</td>
-                            <td className="px-4 py-3 text-red-500">LKR {e.refunded.toLocaleString()}</td>
+                            <td className="px-4 py-3 text-destructive">LKR {e.refunded.toLocaleString()}</td>
                             <td className="px-4 py-3">LKR {e.payouts.toLocaleString()}</td>
                           </tr>
                         ))}
@@ -233,17 +233,27 @@ export default function ReportsPage() {
   )
 }
 
+type ReportTone = "success" | "primary" | "destructive" | "warning"
+
+const REPORT_TONE: Record<ReportTone, { bg: string; text: string }> = {
+  success:     { bg: "bg-emerald-500/10",  text: "text-emerald-600 dark:text-emerald-400" },
+  primary:     { bg: "bg-primary/10",      text: "text-primary" },
+  destructive: { bg: "bg-destructive/10",  text: "text-destructive" },
+  warning:     { bg: "bg-amber-500/10",    text: "text-amber-600 dark:text-amber-400" },
+}
+
 function SummaryCard({
-  icon, label, value, sub, color,
-}: { icon: React.ReactNode; label: string; value: string; sub?: string; color: string }) {
+  icon, label, value, sub, tone = "primary",
+}: { icon: React.ReactNode; label: string; value: string; sub?: string; tone?: ReportTone }) {
+  const t = REPORT_TONE[tone]
   return (
     <div className="rounded-xl border border-border bg-card p-5">
-      <div className="h-9 w-9 rounded-md flex items-center justify-center mb-3" style={{ backgroundColor: `${color}1a`, color }}>
+      <div className={`h-9 w-9 rounded-md flex items-center justify-center mb-3 ${t.bg} ${t.text}`}>
         {icon}
       </div>
-      <div className="text-xl font-semibold">{value}</div>
+      <div className="text-xl font-semibold text-foreground">{value}</div>
       <div className="text-xs text-muted-foreground mt-0.5">{label}</div>
-      {sub && <div className="text-xs mt-1" style={{ color }}>{sub}</div>}
+      {sub && <div className={`text-xs mt-1 ${t.text}`}>{sub}</div>}
     </div>
   )
 }

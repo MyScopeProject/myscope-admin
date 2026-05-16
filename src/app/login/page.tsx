@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import toast from "react-hot-toast"
 import { GoogleLogin, type CredentialResponse } from "@react-oauth/google"
 import { useAuth } from "@/contexts/auth-context"
+import { useTheme } from "@/components/theme-provider"
 import api from "@/lib/api"
 import { adminAPI } from "@/lib/apiEndpoints"
 import { Card, CardHeader, CardContent, CardFooter } from "@/components/ui/card"
@@ -18,6 +19,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const router = useRouter()
   const { login, isAuthenticated, isLoading: authLoading } = useAuth()
+  const { resolvedTheme } = useTheme()
 
   // Redirect if already authenticated
   useEffect(() => {
@@ -101,18 +103,18 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-md">
+    <div className="min-h-screen flex items-center justify-center bg-muted/40 dark:bg-background px-4 py-8">
+      <Card className="w-full max-w-md shadow-lg">
         <CardHeader>
           {/* Logo */}
           <div className="text-center mb-2">
-            <div className="inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-br from-primary to-secondary mb-4">
+            <div className="inline-flex h-14 w-14 items-center justify-center rounded-xl bg-primary mb-4">
               <span className="text-primary-foreground font-bold text-2xl">M</span>
             </div>
-            <h1 className="text-3xl font-bold bg-linear-to-r from-primary to-secondary bg-clip-text text-transparent">
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">
               MyScope Admin
             </h1>
-            <p className="text-muted-foreground mt-2">
+            <p className="text-muted-foreground mt-1 text-sm">
               Sign in to access the admin panel
             </p>
           </div>
@@ -120,38 +122,44 @@ export default function LoginPage() {
 
         <CardContent>
           {/* Login Form */}
-          <form onSubmit={handleLogin} className="space-y-6">
+          <form onSubmit={handleLogin} className="space-y-4">
             {error && (
-              <div className="bg-destructive/10 border border-destructive/50 text-destructive px-4 py-3 rounded-lg text-sm">
+              <div className="bg-destructive/10 border border-destructive/30 text-destructive px-4 py-3 rounded-md text-sm">
                 {error}
               </div>
             )}
 
-            <Input
-              label="Email Address"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="admin@myscope.com"
-              required
-              autoComplete="email"
-            />
+            <div className="space-y-2">
+              <label htmlFor="email" className="text-sm font-medium text-foreground">
+                Email address
+              </label>
+              <Input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="admin@myscope.com"
+                required
+                autoComplete="email"
+              />
+            </div>
 
-            <Input
-              label="Password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              required
-              autoComplete="current-password"
-            />
+            <div className="space-y-2">
+              <label htmlFor="password" className="text-sm font-medium text-foreground">
+                Password
+              </label>
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                required
+                autoComplete="current-password"
+              />
+            </div>
 
-            <Button
-              type="submit"
-              className="w-full"
-              loading={loading}
-            >
+            <Button type="submit" size="lg" className="w-full" disabled={loading}>
               {loading ? "Signing in..." : "Sign In"}
             </Button>
 
@@ -171,7 +179,7 @@ export default function LoginPage() {
                   setError("Google login failed. Please try again.")
                   toast.error("Google login failed.")
                 }}
-                theme="filled_black"
+                theme={resolvedTheme === "dark" ? "filled_black" : "outline"}
                 size="large"
                 width="320"
               />

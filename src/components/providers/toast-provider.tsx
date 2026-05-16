@@ -7,35 +7,25 @@ export function ToastProvider() {
     <Toaster
       position="top-right"
       toastOptions={{
-        // Default options
         duration: 4000,
+        // Use raw CSS variables so toasts adapt to light/dark automatically.
+        // (`hsl(var(--card))` doesn't work here — the tokens are oklch, not hsl.)
         style: {
-          background: 'hsl(var(--card))',
-          color: 'hsl(var(--foreground))',
-          border: '1px solid hsl(var(--border))',
+          background: 'var(--popover)',
+          color: 'var(--popover-foreground)',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-md)',
         },
-        // Success
         success: {
           duration: 3000,
-          iconTheme: {
-            primary: '#10B981',
-            secondary: '#FFFFFF',
-          },
+          iconTheme: { primary: '#10B981', secondary: '#FFFFFF' },
         },
-        // Error
         error: {
           duration: 5000,
-          iconTheme: {
-            primary: '#EF4444',
-            secondary: '#FFFFFF',
-          },
+          iconTheme: { primary: '#EF4444', secondary: '#FFFFFF' },
         },
-        // Loading
         loading: {
-          iconTheme: {
-            primary: '#6366F1',
-            secondary: '#FFFFFF',
-          },
+          iconTheme: { primary: '#6366F1', secondary: '#FFFFFF' },
         },
       }}
     />

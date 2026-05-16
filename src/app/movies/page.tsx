@@ -144,7 +144,7 @@ export default function MoviesPage() {
                       </div>
                     )}
                     {movie.featured && (
-                      <span className="absolute top-2 left-2 bg-yellow-500 text-black text-xs font-semibold px-2 py-1 rounded-full flex items-center gap-1">
+                      <span className="absolute top-2 left-2 bg-amber-500 text-amber-950 text-xs font-semibold px-2 py-1 rounded-full flex items-center gap-1 shadow">
                         <Star className="h-3 w-3" /> Featured
                       </span>
                     )}
@@ -159,16 +159,18 @@ export default function MoviesPage() {
                     </p>
                     <div className="flex gap-2 pt-2">
                       <button
+                        type="button"
                         onClick={() => { setEditing(movie); setShowModal(true) }}
-                        className="flex-1 px-3 py-2 text-sm bg-primary/10 text-primary rounded-lg hover:bg-primary/20 transition flex items-center justify-center gap-1"
+                        className="flex-1 px-3 py-2 text-sm bg-primary/10 text-primary rounded-md hover:bg-primary/20 transition flex items-center justify-center gap-1"
                       >
                         <Edit className="h-3.5 w-3.5" /> Edit
                       </button>
                       <button
+                        type="button"
                         onClick={() => handleToggleFeatured(movie.id)}
-                        className={`px-3 py-2 text-sm rounded-lg transition flex items-center justify-center ${
+                        className={`px-3 py-2 text-sm rounded-md transition flex items-center justify-center ${
                           movie.featured
-                            ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30'
+                            ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400 hover:bg-amber-500/30'
                             : 'bg-muted text-muted-foreground hover:bg-muted/80'
                         }`}
                         title={movie.featured ? 'Unfeature' : 'Feature'}
@@ -176,8 +178,9 @@ export default function MoviesPage() {
                         <Star className="h-3.5 w-3.5" />
                       </button>
                       <button
+                        type="button"
                         onClick={() => handleDelete(movie.id)}
-                        className="px-3 py-2 text-sm bg-red-500/10 text-red-500 rounded-lg hover:bg-red-500/20 transition"
+                        className="px-3 py-2 text-sm bg-destructive/10 text-destructive rounded-md hover:bg-destructive/20 transition"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
@@ -285,7 +288,7 @@ function Field({ label, value, onChange, required, textarea, placeholder }: {
   const cls = "w-full px-3 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring text-sm"
   return (
     <div>
-      <label className="block text-xs font-medium text-foreground mb-1">{label}{required && <span className="text-red-500">*</span>}</label>
+      <label className="block text-xs font-medium text-foreground mb-1">{label}{required && <span className="text-destructive ml-0.5">*</span>}</label>
       {textarea ? (
         <textarea value={value} onChange={(e) => onChange(e.target.value)} required={required} placeholder={placeholder} rows={3} className={cls} />
       ) : (

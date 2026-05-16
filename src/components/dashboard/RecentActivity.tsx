@@ -16,6 +16,7 @@ import {
   AlertTriangleIcon,
   InfoIcon,
   RefreshCwIcon,
+  type LucideIcon,
 } from 'lucide-react';
 
 interface AdminLog {
@@ -41,7 +42,7 @@ interface AdminLog {
   };
 }
 
-const ACTION_ICONS: Record<string, any> = {
+const ACTION_ICONS: Record<string, LucideIcon> = {
   user: UserIcon,
   music: MusicIcon,
   event: CalendarIcon,
@@ -51,25 +52,26 @@ const ACTION_ICONS: Record<string, any> = {
   default: ShieldIcon,
 };
 
-const STATUS_ICONS = {
+const STATUS_ICONS: Record<AdminLog['status'], LucideIcon> = {
   success: CheckCircleIcon,
   error: XCircleIcon,
   warning: AlertTriangleIcon,
   info: InfoIcon,
 };
 
-const STATUS_COLORS = {
-  success: 'text-green-500',
-  error: 'text-red-500',
-  warning: 'text-yellow-500',
-  info: 'text-blue-500',
+// Status -> Tailwind utility classes (token-driven, work in both themes).
+const STATUS_TONE: Record<AdminLog['status'], { bg: string; text: string }> = {
+  success: { bg: 'bg-emerald-500/10', text: 'text-emerald-600 dark:text-emerald-400' },
+  error: { bg: 'bg-destructive/10', text: 'text-destructive' },
+  warning: { bg: 'bg-amber-500/10', text: 'text-amber-600 dark:text-amber-400' },
+  info: { bg: 'bg-primary/10', text: 'text-primary' },
 };
 
-const SEVERITY_COLORS = {
-  low: { bg: "rgba(167, 139, 250, 0.1)", text: "#A78BFA" },
-  medium: { bg: "rgba(183, 148, 246, 0.1)", text: "#B794F6" },
-  high: { bg: "rgba(216, 199, 254, 0.1)", text: "#D8C7FE" },
-  critical: { bg: "rgba(255, 107, 107, 0.1)", text: "#FF6B6B" },
+const SEVERITY_TONE: Record<AdminLog['severity'], string> = {
+  low: 'bg-muted text-muted-foreground',
+  medium: 'bg-primary/10 text-primary',
+  high: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
+  critical: 'bg-destructive/15 text-destructive',
 };
 
 export default function RecentActivity() {
@@ -80,11 +82,8 @@ export default function RecentActivity() {
 
   const fetchLogs = async (isRefresh = false) => {
     try {
-      if (isRefresh) {
-        setIsRefreshing(true);
-      } else {
-        setLoading(true);
-      }
+      if (isRefresh) setIsRefreshing(true);
+      else setLoading(true);
       setError(null);
 
       const response = await adminAPI.getLogs({ limit: 15 });
@@ -100,16 +99,12 @@ export default function RecentActivity() {
 
   useEffect(() => {
     fetchLogs();
-
-    // Auto-refresh every 30 seconds
     const interval = setInterval(() => fetchLogs(true), 30000);
     return () => clearInterval(interval);
   }, []);
 
-  const getActionIcon = (resourceType?: string) => {
-    const IconComponent = resourceType ? ACTION_ICONS[resourceType] || ACTION_ICONS.default : ACTION_ICONS.default;
-    return IconComponent;
-  };
+  const getActionIcon = (resourceType?: string): LucideIcon =>
+    (resourceType && ACTION_ICONS[resourceType]) || ACTION_ICONS.default;
 
   const getTimeAgo = (date: string) => {
     try {
@@ -121,20 +116,17 @@ export default function RecentActivity() {
 
   if (loading && !isRefreshing) {
     return (
-      <div className="rounded-lg p-6" style={{
-        background: "#15121D",
-        border: "1px solid rgba(196, 181, 253, 0.10)"
-      }}>
+      <div className="bg-card border border-border rounded-lg p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold" style={{ color: "#F5F3FA" }}>Recent Activity</h2>
+          <h2 className="text-lg font-semibold text-foreground">Recent Activity</h2>
         </div>
         <div className="space-y-4">
           {[1, 2, 3, 4, 5].map((i) => (
             <div key={i} className="animate-pulse flex gap-3">
-              <div className="w-10 h-10 rounded-full" style={{ background: "#3F3A4E" }}></div>
+              <div className="w-10 h-10 rounded-full bg-muted" />
               <div className="flex-1 space-y-2">
-                <div className="h-4 rounded" style={{ background: "#3F3A4E", width: "75%" }}></div>
-                <div className="h-3 rounded" style={{ background: "#3F3A4E", width: "50%" }}></div>
+                <div className="h-4 rounded bg-muted w-3/4" />
+                <div className="h-3 rounded bg-muted w-1/2" />
               </div>
             </div>
           ))}
@@ -144,167 +136,113 @@ export default function RecentActivity() {
   }
 
   return (
-    <div className="rounded-lg p-6" style={{
-      background: "#15121D",
-      border: "1px solid rgba(196, 181, 253, 0.10)"
-    }}>
-      {/* Header */}
+    <div className="bg-card border border-border rounded-lg p-6">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold" style={{ color: "#F5F3FA" }}>Recent Activity</h2>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => fetchLogs(true)}
-            disabled={isRefreshing}
-            className="p-2 rounded-lg transition-colors disabled:opacity-50"
-            style={{
-              color: "#9B95B5",
-              background: "rgba(167, 139, 250, 0.08)"
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.background = "rgba(167, 139, 250, 0.12)"}
-            onMouseLeave={(e) => e.currentTarget.style.background = "rgba(167, 139, 250, 0.08)"}
-            title="Refresh"
-          >
-            <RefreshCwIcon className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
+        <h2 className="text-lg font-semibold text-foreground">Recent Activity</h2>
+        <button
+          type="button"
+          onClick={() => fetchLogs(true)}
+          disabled={isRefreshing}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50"
+          title="Refresh"
+          aria-label="Refresh activity"
+        >
+          <RefreshCwIcon className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+        </button>
       </div>
 
-      {/* Error State */}
       {error && (
-        <div className="rounded-lg p-4 mb-4" style={{
-          background: "rgba(255, 107, 107, 0.1)",
-          border: "1px solid rgba(255, 107, 107, 0.2)"
-        }}>
-          <p className="text-sm" style={{ color: "#FF6B6B" }}>{error}</p>
+        <div className="rounded-md p-4 mb-4 bg-destructive/10 border border-destructive/30">
+          <p className="text-sm text-destructive">{error}</p>
           <button
+            type="button"
             onClick={() => fetchLogs()}
-            className="mt-2 text-sm underline hover:no-underline"
-            style={{ color: "#FF6B6B" }}
+            className="mt-2 text-sm text-destructive underline hover:no-underline"
           >
             Try again
           </button>
         </div>
       )}
 
-      {/* Activity List */}
-      <div className="space-y-3">
+      <div className="space-y-2">
         {logs.length === 0 ? (
-          <div className="text-center py-8" style={{ color: "#9B95B5" }}>
+          <div className="text-center py-10 text-muted-foreground">
             <ShieldIcon className="w-12 h-12 mx-auto mb-2 opacity-50" />
-            <p>No recent activity</p>
+            <p className="text-sm">No recent activity</p>
           </div>
         ) : (
           logs.map((log) => {
             const ActionIcon = getActionIcon(log.resource_type);
-            const StatusIcon = STATUS_ICONS[log.status];
-
-            const statusBgColor = {
-              success: "rgba(74, 222, 128, 0.1)",
-              error: "rgba(255, 107, 107, 0.1)",
-              warning: "rgba(250, 204, 21, 0.1)",
-              info: "rgba(167, 139, 250, 0.1)"
-            }[log.status];
-
-            const statusIconColor = {
-              success: "#4ADE80",
-              error: "#FF6B6B",
-              warning: "#FACC15",
-              info: "#A78BFA"
-            }[log.status];
+            const StatusIcon = STATUS_ICONS[log.status] ?? InfoIcon;
+            const tone = STATUS_TONE[log.status] ?? STATUS_TONE.info;
+            const severityClass =
+              SEVERITY_TONE[log.severity as AdminLog['severity']] ?? SEVERITY_TONE.low;
 
             return (
               <div
                 key={log.id}
-                className="flex gap-3 p-3 rounded-lg transition-colors"
-                style={{
-                  border: "1px solid rgba(196, 181, 253, 0.10)",
-                  background: "rgba(167, 139, 250, 0.02)"
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(167, 139, 250, 0.05)"}
-                onMouseLeave={(e) => e.currentTarget.style.background = "rgba(167, 139, 250, 0.02)"}
+                className="flex gap-3 p-3 rounded-md border border-transparent hover:border-border hover:bg-accent/50 transition-colors"
               >
-                {/* Action Icon */}
+                {/* Action icon */}
                 <div className="shrink-0">
-                  <div 
-                    className="w-10 h-10 rounded-full flex items-center justify-center"
-                    style={{ background: statusBgColor }}
-                  >
-                    <ActionIcon className="w-5 h-5" style={{ color: statusIconColor }} />
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${tone.bg}`}>
+                    <ActionIcon className={`w-5 h-5 ${tone.text}`} />
                   </div>
                 </div>
 
                 {/* Content */}
                 <div className="flex-1 min-w-0">
-                  {/* Description */}
-                  <p className="text-sm line-clamp-2" style={{ color: "#F5F3FA" }}>
-                    <span className="font-medium">{log.admin?.name || log.admin?.username || 'Admin'}</span>{' '}
+                  <p className="text-sm text-foreground line-clamp-2">
+                    <span className="font-medium">
+                      {log.admin?.name || log.admin?.username || 'Admin'}
+                    </span>{' '}
                     {log.description}
                   </p>
 
-                  {/* Meta Info */}
-                  <div className="flex items-center gap-2 mt-1 flex-wrap">
-                    {/* Time */}
-                    <span className="text-xs" style={{ color: "#9B95B5" }}>
-                      {getTimeAgo(log.created_at)}
-                    </span>
+                  <div className="flex items-center gap-2 mt-1 flex-wrap text-xs text-muted-foreground">
+                    <span>{getTimeAgo(log.created_at)}</span>
 
-                    {/* Resource Type */}
                     {log.resource_type && (
                       <>
-                        <span className="text-xs" style={{ color: "#7A7585" }}>•</span>
-                        <span className="text-xs capitalize" style={{ color: "#9B95B5" }}>
-                          {log.resource_type}
-                        </span>
+                        <span className="text-muted-foreground/60">•</span>
+                        <span className="capitalize">{log.resource_type}</span>
                       </>
                     )}
 
-                    {/* Severity Badge */}
                     {log.severity && log.severity !== 'low' && (
                       <>
-                        <span className="text-xs" style={{ color: "#7A7585" }}>•</span>
-                        <span
-                          className="text-xs px-2 py-0.5 rounded-full font-medium"
-                          style={{
-                            background: (SEVERITY_COLORS[log.severity as keyof typeof SEVERITY_COLORS] ?? SEVERITY_COLORS.low).bg,
-                            color: (SEVERITY_COLORS[log.severity as keyof typeof SEVERITY_COLORS] ?? SEVERITY_COLORS.low).text
-                          }}
-                        >
+                        <span className="text-muted-foreground/60">•</span>
+                        <span className={`px-2 py-0.5 rounded-full font-medium ${severityClass}`}>
                           {log.severity}
                         </span>
                       </>
                     )}
 
-                    {/* Metadata */}
                     {log.metadata?.duration && (
                       <>
-                        <span className="text-xs" style={{ color: "#7A7585" }}>•</span>
-                        <span className="text-xs" style={{ color: "#9B95B5" }}>
-                          {log.metadata.duration}ms
-                        </span>
+                        <span className="text-muted-foreground/60">•</span>
+                        <span>{log.metadata.duration}ms</span>
                       </>
                     )}
 
                     {log.metadata?.affectedRecords && (
                       <>
-                        <span className="text-xs" style={{ color: "#7A7585" }}>•</span>
-                        <span className="text-xs" style={{ color: "#9B95B5" }}>
-                          {log.metadata.affectedRecords} affected
-                        </span>
+                        <span className="text-muted-foreground/60">•</span>
+                        <span>{log.metadata.affectedRecords} affected</span>
                       </>
                     )}
                   </div>
                 </div>
 
-                {/* Status Icon */}
+                {/* Status icon */}
                 <div className="shrink-0">
-                  <StatusIcon className="w-5 h-5" style={{ color: statusIconColor }} />
+                  <StatusIcon className={`w-5 h-5 ${tone.text}`} />
                 </div>
               </div>
             );
           })
         )}
       </div>
-
     </div>
   );
 }

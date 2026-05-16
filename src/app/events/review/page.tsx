@@ -303,7 +303,7 @@ function EventCard({
 
       {/* Rejection reason */}
       {event.rejection_reason && (
-        <div className="mt-3 p-3 rounded-md bg-red-500/5 border border-red-500/20 text-sm text-red-400">
+        <div className="mt-3 p-3 rounded-md bg-destructive/10 border border-destructive/30 text-sm text-destructive">
           <span className="font-semibold">Rejection reason: </span>
           {event.rejection_reason}
         </div>
@@ -345,17 +345,19 @@ function EventCard({
       {showActions && (
         <div className="flex items-center gap-2 mt-4 pt-4 border-t border-border">
           <button
+            type="button"
             onClick={onApprove}
             disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-green-500/10 text-green-500 hover:bg-green-500/20 transition disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition disabled:opacity-50"
           >
             {busy ? <Loader className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
             Approve
           </button>
           <button
+            type="button"
             onClick={onReject}
             disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-red-500/10 text-red-500 hover:bg-red-500/20 transition disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-semibold bg-destructive/10 text-destructive hover:bg-destructive/20 transition disabled:opacity-50"
           >
             <XCircle className="h-4 w-4" />
             Reject
@@ -373,32 +375,26 @@ function EventCard({
 }
 
 function StatusBadge({ status }: { status: ApprovalStatus }) {
-  const map: Record<
-    ApprovalStatus,
-    { color: string; bg: string; icon: React.ReactNode; label: string }
-  > = {
+  const map: Record<ApprovalStatus, { classes: string; icon: React.ReactNode; label: string }> = {
     pending: {
-      color: "text-yellow-500",
-      bg: "bg-yellow-500/10",
+      classes: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
       icon: <Clock className="h-3 w-3" />,
       label: "Pending",
     },
     approved: {
-      color: "text-green-500",
-      bg: "bg-green-500/10",
+      classes: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
       icon: <CheckCircle2 className="h-3 w-3" />,
       label: "Approved",
     },
     rejected: {
-      color: "text-red-500",
-      bg: "bg-red-500/10",
+      classes: "bg-destructive/10 text-destructive",
       icon: <XCircle className="h-3 w-3" />,
       label: "Rejected",
     },
   }
   const c = map[status]
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold rounded-full ${c.bg} ${c.color}`}>
+    <span className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold rounded-full ${c.classes}`}>
       {c.icon}
       {c.label}
     </span>
@@ -452,7 +448,7 @@ function RejectModal({
             type="button"
             disabled={busy || !trimmed}
             onClick={() => onSubmit(trimmed)}
-            className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:opacity-90 transition disabled:opacity-50"
+            className="flex-1 px-4 py-2 bg-destructive text-destructive-foreground rounded-md hover:opacity-90 transition disabled:opacity-50"
           >
             {busy ? "Rejecting…" : "Reject"}
           </button>

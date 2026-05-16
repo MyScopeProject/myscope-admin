@@ -39,10 +39,10 @@ const TABS: { key: Status | "all"; label: string }[] = [
 ]
 
 const STATUS_BADGE: Record<Status, { label: string; cls: string; icon: React.ReactNode }> = {
-  requested: { label: "Requested", cls: "bg-gray-500/15 text-gray-400", icon: <Clock className="w-3.5 h-3.5" /> },
-  approved: { label: "Approved", cls: "bg-purple-500/15 text-purple-400", icon: <CheckCircle2 className="w-3.5 h-3.5" /> },
-  paid: { label: "Paid", cls: "bg-green-500/15 text-green-500", icon: <Banknote className="w-3.5 h-3.5" /> },
-  rejected: { label: "Rejected", cls: "bg-red-500/15 text-red-500", icon: <XCircle className="w-3.5 h-3.5" /> },
+  requested: { label: "Requested", cls: "bg-muted text-muted-foreground", icon: <Clock className="w-3.5 h-3.5" /> },
+  approved: { label: "Approved", cls: "bg-primary/15 text-primary", icon: <CheckCircle2 className="w-3.5 h-3.5" /> },
+  paid: { label: "Paid", cls: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400", icon: <Banknote className="w-3.5 h-3.5" /> },
+  rejected: { label: "Rejected", cls: "bg-destructive/15 text-destructive", icon: <XCircle className="w-3.5 h-3.5" /> },
 }
 
 export default function PayoutsPage() {
@@ -213,7 +213,7 @@ export default function PayoutsPage() {
                                 type="button"
                                 onClick={() => markPaid(p.id)}
                                 disabled={pendingId === p.id}
-                                className="px-2 py-1 rounded text-xs bg-green-500/15 text-green-500 hover:bg-green-500/25 disabled:opacity-50"
+                                className="px-2 py-1 rounded text-xs bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/25 disabled:opacity-50"
                               >
                                 {pendingId === p.id ? <Loader className="w-3 h-3 animate-spin" /> : "Mark paid"}
                               </button>
@@ -221,7 +221,7 @@ export default function PayoutsPage() {
                                 type="button"
                                 onClick={() => reject(p.id)}
                                 disabled={pendingId === p.id}
-                                className="px-2 py-1 rounded text-xs bg-red-500/15 text-red-500 hover:bg-red-500/25 disabled:opacity-50"
+                                className="px-2 py-1 rounded text-xs bg-destructive/15 text-destructive hover:bg-destructive/25 disabled:opacity-50"
                               >
                                 Reject
                               </button>

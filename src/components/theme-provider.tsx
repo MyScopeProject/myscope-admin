@@ -12,11 +12,13 @@ type ThemeProviderProps = {
 
 type ThemeProviderState = {
   theme: Theme
+  resolvedTheme: "light" | "dark"
   setTheme: (theme: Theme) => void
 }
 
 const initialState: ThemeProviderState = {
   theme: "system",
+  resolvedTheme: "light",
   setTheme: () => null,
 }
 
@@ -26,40 +28,57 @@ export function ThemeProvider({
   children,
   defaultTheme = "system",
   storageKey = "myscope-admin-theme",
-  ...props
 }: ThemeProviderProps) {
-  const [theme, setTheme] = React.useState<Theme>(
-    () => (typeof window !== "undefined" ? (localStorage.getItem(storageKey) as Theme) : defaultTheme) || defaultTheme
-  )
+  const [theme, setThemeState] = React.useState<Theme>(() => {
+    if (typeof window === "undefined") return defaultTheme
+    return (localStorage.getItem(storageKey) as Theme | null) || defaultTheme
+  })
 
+  const [resolvedTheme, setResolvedTheme] = React.useState<"light" | "dark">(() => {
+    if (typeof window === "undefined") return "light"
+    const stored = (localStorage.getItem(storageKey) as Theme | null) || defaultTheme
+    if (stored === "system") {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+    }
+    return stored
+  })
+
+  // Apply the chosen theme to <html> and follow the system preference if
+  // the user selected "system".
   React.useEffect(() => {
-    const root = window.document.documentElement
+    const root = document.documentElement
+    const mql = window.matchMedia("(prefers-color-scheme: dark)")
 
-    root.classList.remove("light", "dark")
-
-    if (theme === "system") {
-      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
-        .matches
-        ? "dark"
-        : "light"
-
-      root.classList.add(systemTheme)
-      return
+    const apply = () => {
+      const next = theme === "system" ? (mql.matches ? "dark" : "light") : theme
+      root.classList.remove("light", "dark")
+      root.classList.add(next)
+      root.style.colorScheme = next
+      setResolvedTheme(next)
     }
 
-    root.classList.add(theme)
+    apply()
+
+    if (theme === "system") {
+      mql.addEventListener("change", apply)
+      return () => mql.removeEventListener("change", apply)
+    }
   }, [theme])
 
-  const value = {
-    theme,
-    setTheme: (theme: Theme) => {
-      localStorage.setItem(storageKey, theme)
-      setTheme(theme)
-    },
-  }
+  const value = React.useMemo<ThemeProviderState>(
+    () => ({
+      theme,
+      resolvedTheme,
+      setTheme: (t: Theme) => {
+        localStorage.setItem(storageKey, t)
+        setThemeState(t)
+      },
+    }),
+    [theme, resolvedTheme, storageKey],
+  )
 
   return (
-    <ThemeProviderContext.Provider {...props} value={value}>
+    <ThemeProviderContext.Provider value={value}>
       {children}
     </ThemeProviderContext.Provider>
   )
@@ -67,9 +86,8 @@ export function ThemeProvider({
 
 export const useTheme = () => {
   const context = React.useContext(ThemeProviderContext)
-
-  if (context === undefined)
+  if (!context) {
     throw new Error("useTheme must be used within a ThemeProvider")
-
+  }
   return context
 }

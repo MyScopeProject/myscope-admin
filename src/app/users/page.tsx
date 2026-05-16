@@ -1,5 +1,6 @@
 "use client"
 
+import Image from "next/image"
 import { useState, useEffect } from "react"
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute"
 import { AdminLayout } from "@/components/layout/AdminLayout"
@@ -8,13 +9,13 @@ import { PageLoader } from "@/components/ui/loading"
 import { ErrorMessage, EmptyState } from "@/components/ui/error-message"
 import { adminAPI } from "@/lib/apiEndpoints"
 import toast from "react-hot-toast"
-import { 
-  Users, 
-  Search, 
-  Plus, 
-  Edit, 
-  Trash2, 
-  Ban, 
+import {
+  Users,
+  Search,
+  Plus,
+  Edit,
+  Trash2,
+  Ban,
   CheckCircle2,
   XCircle,
   Filter,
@@ -30,6 +31,7 @@ interface User {
   status?: string
   created_at: string
   last_login?: string
+  profile_image?: string
 }
 
 export default function UsersPage() {
@@ -171,12 +173,12 @@ export default function UsersPage() {
 
           {/* Stats Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
-            <StatCard title="Total Users" value={stats.total} color="bg-blue-500" />
-            <StatCard title="Artists" value={stats.artists} color="bg-pink-500" />
-            <StatCard title="Moderators" value={stats.moderators} color="bg-orange-500" />
-            <StatCard title="Admins" value={stats.admins} color="bg-purple-500" />
-            <StatCard title="Active" value={stats.active} color="bg-green-500" />
-            <StatCard title="Banned" value={stats.banned} color="bg-red-500" />
+            <StatCard title="Total Users" value={stats.total} tone="primary" />
+            <StatCard title="Artists" value={stats.artists} tone="accent" />
+            <StatCard title="Moderators" value={stats.moderators} tone="warning" />
+            <StatCard title="Admins" value={stats.admins} tone="primary" />
+            <StatCard title="Active" value={stats.active} tone="success" />
+            <StatCard title="Banned" value={stats.banned} tone="destructive" />
           </div>
 
           {/* Filters and Search */}
@@ -211,7 +213,7 @@ export default function UsersPage() {
                   <option value="superadmin">Super Admin</option>
                 </select>
               </div>
-              <button className="inline-flex items-center px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:opacity-90 transition">
+              <button type="button" className="inline-flex items-center px-4 py-2 border border-border text-foreground rounded-md hover:bg-accent hover:text-accent-foreground transition">
                 <Download className="mr-2 h-4 w-4" />
                 Export
               </button>
@@ -272,42 +274,46 @@ export default function UsersPage() {
                     {filteredUsers.map((user) => (
                       <tr key={user.id} className="hover:bg-muted/30 transition-colors">
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center">
-                            <div className="h-10 w-10 rounded-full bg-linear-to-br from-primary to-secondary flex items-center justify-center text-primary-foreground font-semibold">
-                              {user.name.charAt(0).toUpperCase()}
+                          <div className="flex items-center gap-3">
+                            <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-full bg-primary/10">
+                              {user.profile_image ? (
+                                <Image
+                                  src={user.profile_image}
+                                  alt={user.name}
+                                  width={40}
+                                  height={40}
+                                  className="h-full w-full object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center bg-primary text-primary-foreground font-semibold text-sm">
+                                  {user.name.charAt(0).toUpperCase()}
+                                </div>
+                              )}
                             </div>
-                            <div className="ml-4">
+                            <div className="min-w-0">
                               <div className="text-sm font-medium text-foreground">
                                 {user.name}
                               </div>
-                              <div className="text-sm text-muted-foreground flex items-center gap-1">
-                                <Mail className="h-3 w-3" />
-                                {user.email}
+                              <div className="flex items-center gap-1 truncate text-sm text-muted-foreground">
+                                <Mail className="h-3 w-3 shrink-0" />
+                                <span className="truncate">{user.email}</span>
                               </div>
                             </div>
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                            user.role === 'superadmin' ? 'bg-purple-500/10 text-purple-500' :
-                            user.role === 'artist' ? 'bg-pink-500/10 text-pink-500' :
-                            user.role === 'moderator' ? 'bg-orange-500/10 text-orange-500' :
-                            user.role === 'event-manager' ? 'bg-blue-500/10 text-blue-500' :
-                            user.role === 'content-manager' ? 'bg-green-500/10 text-green-500' :
-                            user.role === 'support' ? 'bg-yellow-500/10 text-yellow-500' :
-                            'bg-gray-500/10 text-gray-500'
-                          }`}>
+                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full capitalize ${roleBadgeClass(user.role)}`}>
                             {user.role.replace('-', ' ')}
                           </span>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           {user.status === 'banned' ? (
-                            <span className="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full bg-red-500/10 text-red-500">
+                            <span className="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full bg-destructive/10 text-destructive">
                               <XCircle className="mr-1 h-3 w-3" />
                               Banned
                             </span>
                           ) : (
-                            <span className="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full bg-green-500/10 text-green-500">
+                            <span className="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
                               <CheckCircle2 className="mr-1 h-3 w-3" />
                               Active
                             </span>
@@ -317,10 +323,10 @@ export default function UsersPage() {
                           {user.created_at ? new Date(user.created_at).toLocaleDateString() : '—'}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                          <div className="flex items-center justify-end gap-2">
+                          <div className="flex items-center justify-end gap-1">
                             <button
                               onClick={() => handleEditUser(user)}
-                              className="p-2 text-blue-500 hover:bg-blue-500/10 rounded-lg transition"
+                              className="p-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition"
                               title="Edit user"
                             >
                               <Edit className="h-4 w-4" />
@@ -328,8 +334,8 @@ export default function UsersPage() {
                             {user.role === 'user' && (
                               <button
                                 onClick={() => handlePromoteToModerator(user.id)}
-                                className="p-2 text-purple-500 hover:bg-purple-500/10 rounded-lg transition"
-                                title="Promote to Moderator"
+                                className="p-2 text-primary hover:bg-primary/10 rounded-md transition"
+                                title="Promote to Content Manager"
                               >
                                 <CheckCircle2 className="h-4 w-4" />
                               </button>
@@ -337,7 +343,7 @@ export default function UsersPage() {
                             {user.status === 'banned' ? (
                               <button
                                 onClick={() => handleUnbanUser(user.id)}
-                                className="p-2 text-green-500 hover:bg-green-500/10 rounded-lg transition"
+                                className="p-2 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 rounded-md transition"
                                 title="Unban user"
                               >
                                 <CheckCircle2 className="h-4 w-4" />
@@ -345,7 +351,7 @@ export default function UsersPage() {
                             ) : (
                               <button
                                 onClick={() => handleBanUser(user.id)}
-                                className="p-2 text-yellow-500 hover:bg-yellow-500/10 rounded-lg transition"
+                                className="p-2 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 rounded-md transition"
                                 title="Ban user"
                               >
                                 <Ban className="h-4 w-4" />
@@ -353,7 +359,7 @@ export default function UsersPage() {
                             )}
                             <button
                               onClick={() => handleDeleteUser(user.id)}
-                              className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg transition"
+                              className="p-2 text-destructive hover:bg-destructive/10 rounded-md transition"
                               title="Delete user"
                             >
                               <Trash2 className="h-4 w-4" />
@@ -401,7 +407,32 @@ export default function UsersPage() {
   )
 }
 
-function StatCard({ title, value, color }: { title: string; value: number; color: string }) {
+function roleBadgeClass(role: string): string {
+  switch (role) {
+    case 'superadmin':       return 'bg-primary/15 text-primary'
+    case 'event-manager':    return 'bg-sky-500/10 text-sky-600 dark:text-sky-400'
+    case 'content-manager':  return 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+    case 'moderator':        return 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+    case 'support':          return 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400'
+    case 'organizer':        return 'bg-violet-500/10 text-violet-600 dark:text-violet-400'
+    case 'scanner':          return 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400'
+    case 'artist':           return 'bg-pink-500/10 text-pink-600 dark:text-pink-400'
+    default:                 return 'bg-muted text-muted-foreground'
+  }
+}
+
+type Tone = "primary" | "accent" | "success" | "warning" | "destructive"
+
+const TONE_CLASSES: Record<Tone, { bg: string; text: string }> = {
+  primary: { bg: "bg-primary/10", text: "text-primary" },
+  accent: { bg: "bg-accent text-accent-foreground/80", text: "text-foreground" },
+  success: { bg: "bg-emerald-500/10", text: "text-emerald-600 dark:text-emerald-400" },
+  warning: { bg: "bg-amber-500/10", text: "text-amber-600 dark:text-amber-400" },
+  destructive: { bg: "bg-destructive/10", text: "text-destructive" },
+}
+
+function StatCard({ title, value, tone = "primary" }: { title: string; value: number; tone?: Tone }) {
+  const t = TONE_CLASSES[tone]
   return (
     <div className="bg-card border border-border rounded-lg p-6">
       <div className="flex items-center justify-between">
@@ -409,8 +440,8 @@ function StatCard({ title, value, color }: { title: string; value: number; color
           <p className="text-sm text-muted-foreground">{title}</p>
           <p className="text-3xl font-bold text-foreground mt-1">{value}</p>
         </div>
-        <div className={`h-12 w-12 rounded-lg ${color}/10 flex items-center justify-center`}>
-          <Users className={`h-6 w-6 ${color.replace('bg-', 'text-')}`} />
+        <div className={`h-12 w-12 rounded-md flex items-center justify-center ${t.bg}`}>
+          <Users className={`h-6 w-6 ${t.text}`} />
         </div>
       </div>
     </div>

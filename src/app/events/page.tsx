@@ -37,7 +37,7 @@ interface Event {
     name: string
     email: string
   }
-  image?: string
+  banner_url?: string | null
   category?: string
   created_at: string
 }
@@ -144,10 +144,10 @@ export default function EventsPage() {
 
           {/* Stats */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard title="Total Events" value={stats.total} color="bg-blue-500" />
-            <StatCard title="Approved" value={stats.approved} color="bg-green-500" />
-            <StatCard title="Pending" value={stats.pending} color="bg-yellow-500" />
-            <StatCard title="Upcoming" value={stats.upcoming} color="bg-purple-500" />
+            <StatCard title="Total Events" value={stats.total} />
+            <StatCard title="Approved" value={stats.approved} />
+            <StatCard title="Pending" value={stats.pending} />
+            <StatCard title="Upcoming" value={stats.upcoming} />
           </div>
 
           {/* Filters */}
@@ -193,10 +193,15 @@ export default function EventsPage() {
                 const cap = event.tickets_available ?? 0
                 return (
                   <div key={event.id} className="bg-card border border-border rounded-lg overflow-hidden hover:border-primary/50 transition-colors">
-                    <div className="h-48 bg-linear-to-br from-primary/20 to-secondary/20 flex items-center justify-center">
-                      {event.image ? (
+                    <div className="h-48 bg-primary/10 flex items-center justify-center overflow-hidden">
+                      {event.banner_url ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={event.image} alt={event.title} className="h-full w-full object-cover" />
+                        <img
+                          src={event.banner_url}
+                          alt={event.title}
+                          className="h-full w-full object-cover"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                        />
                       ) : (
                         <Calendar className="h-16 w-16 text-primary/40" />
                       )}
@@ -207,10 +212,10 @@ export default function EventsPage() {
                           <h3 className="text-lg font-semibold text-foreground line-clamp-1">
                             {event.title}
                           </h3>
-                          <span className={`px-2 py-1 text-xs font-semibold rounded-full whitespace-nowrap ${
-                            event.approval_status === 'approved' ? 'bg-green-500/10 text-green-500' :
-                            event.approval_status === 'pending' ? 'bg-yellow-500/10 text-yellow-500' :
-                            'bg-red-500/10 text-red-500'
+                          <span className={`px-2 py-1 text-xs font-semibold rounded-full whitespace-nowrap capitalize ${
+                            event.approval_status === 'approved' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' :
+                            event.approval_status === 'pending' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400' :
+                            'bg-destructive/10 text-destructive'
                           }`}>
                             {event.approval_status}
                           </span>
@@ -243,15 +248,17 @@ export default function EventsPage() {
                       {event.approval_status === 'pending' && (
                         <div className="flex gap-2 pt-2">
                           <button
+                            type="button"
                             onClick={() => handleApprove(event.id)}
-                            className="flex-1 px-3 py-2 text-sm bg-green-500/10 text-green-500 rounded-lg hover:bg-green-500/20 transition flex items-center justify-center gap-1"
+                            className="flex-1 px-3 py-2 text-sm bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-md hover:bg-emerald-500/20 transition flex items-center justify-center gap-1"
                           >
                             <CheckCircle className="h-4 w-4" />
                             Approve
                           </button>
                           <button
+                            type="button"
                             onClick={() => handleReject(event.id)}
-                            className="flex-1 px-3 py-2 text-sm bg-red-500/10 text-red-500 rounded-lg hover:bg-red-500/20 transition flex items-center justify-center gap-1"
+                            className="flex-1 px-3 py-2 text-sm bg-destructive/10 text-destructive rounded-md hover:bg-destructive/20 transition flex items-center justify-center gap-1"
                           >
                             <XCircle className="h-4 w-4" />
                             Reject
@@ -270,7 +277,7 @@ export default function EventsPage() {
   )
 }
 
-function StatCard({ title, value }: { title: string; value: number; color?: string }) {
+function StatCard({ title, value }: { title: string; value: number }) {
   return (
     <div className="bg-card border border-border rounded-lg p-6">
       <p className="text-sm text-muted-foreground">{title}</p>
