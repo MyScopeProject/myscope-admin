@@ -90,11 +90,10 @@ The sidebar includes these routes:
 3. **Organizers** - `/organizers` - Organizer application review
 4. **Events** - `/events` - Event management
 5. **Event Review** - `/events/review` - Event approval queue
-6. **Movies** - `/movies` - Movie content management
-7. **Payouts** - `/payouts` - Organizer payouts
-8. **Finance Reports** - `/reports` - Revenue & fee reporting
-9. **Activity Logs** - `/logs` - Admin activity audit
-10. **Settings** - `/settings` - Admin settings
+6. **Payouts** - `/payouts` - Organizer payouts
+7. **Finance Reports** - `/reports` - Revenue & fee reporting
+8. **Activity Logs** - `/logs` - Admin activity audit
+9. **Settings** - `/settings` - Admin settings
 
 ## Responsive Behavior
 

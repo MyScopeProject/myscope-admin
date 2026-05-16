@@ -33,16 +33,6 @@ export const adminAPI = {
   getEventForReview: (id: string) => api.get(`/admin/events/${id}`),
   deleteEvent: (id: string, opts?: { force?: boolean }) =>
     api.delete(`/admin/events/${id}`, { params: opts?.force ? { force: 'true' } : undefined }),
-  
-  // Movies Management
-  getMovies: (params?: { page?: number; limit?: number; search?: string; genre?: string; status?: string; featured?: string }) =>
-    api.get('/admin/movies', { params }),
-  getMovieById: (id: string) => api.get(`/admin/movies/${id}`),
-  createMovie: (data: any) => api.post('/admin/movies', data),
-  updateMovie: (id: string, data: any) => api.put(`/admin/movies/${id}`, data),
-  toggleMovieFeatured: (id: string) => api.put(`/admin/movies/${id}/toggle-featured`),
-  deleteMovie: (id: string) => api.delete(`/admin/movies/${id}`),
-
 
   // Settings Management
   getSettings: () => api.get('/admin/settings'),
@@ -50,10 +40,18 @@ export const adminAPI = {
   updateFeatures: (data: any) => api.put('/admin/settings/features', data),
   updateRoles: (data: any) => api.put('/admin/settings/roles', data),
   createCustomRole: (data: any) => api.post('/admin/settings/roles/custom', data),
-  deleteCustomRole: (roleName: string) => api.delete(`/admin/settings/roles/custom/${roleName}`),
-  updateNotifications: (data: any) => api.put('/admin/settings/notifications', data),
-  updateModeration: (data: any) => api.put('/admin/settings/moderation', data),
-  updateSystem: (data: any) => api.put('/admin/settings/system', data),
+  // Encode the name so role labels with spaces or punctuation survive the URL.
+  deleteCustomRole: (roleName: string) =>
+    api.delete(`/admin/settings/roles/custom/${encodeURIComponent(roleName)}`),
+  // Email -> role assignments. Adding promotes the user with that email to
+  // the role on their next login; removing only unbinds the assignment (it
+  // doesn't demote them automatically — use the Users page for that).
+  addRoleAssignment: (roleName: string, email: string) =>
+    api.post(`/admin/settings/roles/${encodeURIComponent(roleName)}/emails`, { email }),
+  removeRoleAssignment: (roleName: string, email: string) =>
+    api.delete(
+      `/admin/settings/roles/${encodeURIComponent(roleName)}/emails/${encodeURIComponent(email)}`,
+    ),
   resetSettings: () => api.post('/admin/settings/reset'),
   
   // Admin Logs

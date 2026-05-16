@@ -8,9 +8,20 @@ import { useAuth } from "@/contexts/auth-context"
 import { useTheme } from "@/components/theme-provider"
 import api from "@/lib/api"
 import { adminAPI } from "@/lib/apiEndpoints"
+import { canAccessRoute } from "@/lib/rbac"
 import { Card, CardHeader, CardContent, CardFooter } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+
+// Honor the saved redirect only if the freshly-logged-in user can actually
+// reach it. Otherwise a stale `redirectAfterLogin=/settings` from an earlier
+// attempt sends a non-superadmin straight to /unauthorized.
+const safeRedirectFor = (role: string): string => {
+  const saved = localStorage.getItem('redirectAfterLogin')
+  localStorage.removeItem('redirectAfterLogin')
+  if (saved && canAccessRoute(role, saved)) return saved
+  return '/dashboard'
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
@@ -52,8 +63,7 @@ export default function LoginPage() {
 
       toast.success("Login successful!", { id: loadingToast })
 
-      const redirectTo = localStorage.getItem('redirectAfterLogin') || '/dashboard'
-      localStorage.removeItem('redirectAfterLogin')
+      const redirectTo = safeRedirectFor(data.user.role)
 
       setTimeout(() => {
         router.push(redirectTo)
@@ -89,8 +99,7 @@ export default function LoginPage() {
 
       toast.success("Login successful!", { id: loadingToast })
 
-      const redirectTo = localStorage.getItem('redirectAfterLogin') || '/dashboard'
-      localStorage.removeItem('redirectAfterLogin')
+      const redirectTo = safeRedirectFor(data.user.role)
 
       setTimeout(() => router.push(redirectTo), 500)
     } catch (err: any) {

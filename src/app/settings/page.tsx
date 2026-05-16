@@ -1,154 +1,149 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute"
 import { AdminLayout } from "@/components/layout/AdminLayout"
 import { useAuth } from "@/contexts/auth-context"
 import { PageLoader } from "@/components/ui/loading"
 import { adminAPI } from "@/lib/apiEndpoints"
 import toast from "react-hot-toast"
-import { 
-  Settings as SettingsIcon, 
+import {
+  Settings as SettingsIcon,
   Save,
   RotateCcw,
-  Globe,
   Shield,
-  Bell,
-  Users,
   ToggleLeft,
-  ToggleRight,
   Plus,
   Trash2,
-  AlertTriangle
+  AlertTriangle,
+  Loader2,
+  Check,
+  Wrench,
+  X,
+  Users,
+  Calendar,
+  Banknote,
+  Eye,
+  ShieldAlert,
+  Search,
 } from "lucide-react"
 
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface CustomRole {
+  name: string
+  description: string
+  permissions: string[]
+}
+
 interface Settings {
-  siteConfig: {
-    platformName: string
-    platformDescription: string
-    defaultTheme: string
-    logo: string
-    favicon: string
-    supportEmail: string
-    termsUrl: string
-    privacyUrl: string
-  }
   features: {
     enableUserRegistration: boolean
-    enableMusicUpload: boolean
-    enableCommunityPosts: boolean
     enableEvents: boolean
-    enableShows: boolean
-    enableComments: boolean
     requireEmailVerification: boolean
     enableNotifications: boolean
     maintenanceMode: boolean
   }
   roles: {
-    permissions: {
-      superadmin: string[]
-      'content-manager': string[]
-      moderator: string[]
-      artist: string[]
-      user: string[]
-    }
-    customRoles: Array<{
-      name: string
-      permissions: string[]
-      description: string
-    }>
-  }
-  notifications: {
-    emailNotifications: {
-      enabled: boolean
-      newUserSignup: boolean
-      newContentUpload: boolean
-      reportedContent: boolean
-      systemAlerts: boolean
-    }
-    pushNotifications: {
-      enabled: boolean
-      newFollower: boolean
-      newComment: boolean
-      newLike: boolean
-    }
-    adminNotifications: {
-      emailDigest: string
-      reportThreshold: number
-    }
-  }
-  moderation: {
-    autoModeration: {
-      enabled: boolean
-      profanityFilter: boolean
-      spamDetection: boolean
-    }
-    approvalRequired: {
-      music: boolean
-      events: boolean
-      shows: boolean
-      posts: boolean
-    }
+    permissions: Record<string, string[]>
+    customRoles: CustomRole[]
+    // Email -> role map. UI shape: { roleName: [email,...] }.
+    assignments: Record<string, string[]>
   }
 }
 
-type TabType = 'site-config' | 'features' | 'roles' | 'notifications' | 'moderation'
+type SectionId = "features" | "roles"
+
+// ---------------------------------------------------------------------------
+// Permission catalog
+// ---------------------------------------------------------------------------
+// Grouped, described list shown in the custom-role builder. Keys must match
+// what the API stores in roles.permissions arrays.
+
+const PERMISSION_CATALOG: {
+  group: string
+  icon: any
+  permissions: { key: string; label: string; description: string }[]
+}[] = [
+  {
+    group: "Users",
+    icon: Users,
+    permissions: [
+      { key: "manage_users", label: "Manage users", description: "Create, edit, and suspend user accounts." },
+      { key: "ban_users", label: "Ban users", description: "Permanently revoke a user's access." },
+      { key: "manage_organizers", label: "Manage organizers", description: "Approve or reject organizer applications." },
+    ],
+  },
+  {
+    group: "Events",
+    icon: Calendar,
+    permissions: [
+      { key: "manage_events", label: "Manage events", description: "Create, edit, and delete any event." },
+      { key: "approve_events", label: "Approve events", description: "Move events from pending to approved state." },
+    ],
+  },
+  {
+    group: "Finance",
+    icon: Banknote,
+    permissions: [
+      { key: "manage_payouts", label: "Manage payouts", description: "Process organizer payouts and refunds." },
+      { key: "view_reports", label: "View reports", description: "Access revenue and financial reports." },
+    ],
+  },
+  {
+    group: "Insights",
+    icon: Eye,
+    permissions: [
+      { key: "view_analytics", label: "View analytics", description: "See platform-wide stats and dashboards." },
+    ],
+  },
+]
+
+const ALL_PERMISSION_KEYS = PERMISSION_CATALOG.flatMap((g) => g.permissions.map((p) => p.key))
+const PERMISSION_LABELS: Record<string, string> = Object.fromEntries(
+  PERMISSION_CATALOG.flatMap((g) => g.permissions.map((p) => [p.key, p.label])),
+)
+
+// Fallback built-in roles shown when the API hasn't been restarted yet or the
+// settings row hasn't been seeded. Keeps the page useful instead of empty.
+const DEFAULT_BUILTIN_ROLES: Record<string, string[]> = {
+  superadmin: ["*"],
+  "content-manager": ["manage_events", "approve_events", "view_reports"],
+  "event-manager": ["manage_events", "manage_payouts", "view_analytics"],
+  moderator: ["approve_events", "ban_users", "view_reports"],
+  organizer: ["manage_events"],
+  user: [],
+}
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
 
 export default function SettingsPage() {
   const { user: currentUser } = useAuth()
   const [settings, setSettings] = useState<Settings | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [activeTab, setActiveTab] = useState<TabType>('site-config')
-  const [hasChanges, setHasChanges] = useState(false)
+  const [section, setSection] = useState<SectionId>("roles")
+  const [resetting, setResetting] = useState(false)
+  const [confirmReset, setConfirmReset] = useState(false)
 
-  // Form states
-  const [siteConfig, setSiteConfig] = useState<Settings['siteConfig']>({
-    platformName: '',
-    platformDescription: '',
-    defaultTheme: 'system',
-    logo: '',
-    favicon: '',
-    supportEmail: '',
-    termsUrl: '',
-    privacyUrl: ''
-  })
-  
-  const [features, setFeatures] = useState<Settings['features']>({
+  // Features working copy
+  const [features, setFeatures] = useState<Settings["features"]>({
     enableUserRegistration: true,
-    enableMusicUpload: true,
-    enableCommunityPosts: true,
     enableEvents: true,
-    enableShows: true,
-    enableComments: true,
     requireEmailVerification: false,
     enableNotifications: true,
-    maintenanceMode: false
+    maintenanceMode: false,
   })
 
-  const [notifications, setNotifications] = useState<Settings['notifications']>({
-    emailNotifications: {
-      enabled: true,
-      newUserSignup: true,
-      newContentUpload: true,
-      reportedContent: true,
-      systemAlerts: true
-    },
-    pushNotifications: {
-      enabled: false,
-      newFollower: true,
-      newComment: true,
-      newLike: true
-    },
-    adminNotifications: {
-      emailDigest: 'daily',
-      reportThreshold: 5
-    }
-  })
-
-  const [newRoleName, setNewRoleName] = useState('')
-  const [newRoleDescription, setNewRoleDescription] = useState('')
+  // Custom-role form
+  const [newRoleName, setNewRoleName] = useState("")
+  const [newRoleDescription, setNewRoleDescription] = useState("")
   const [newRolePermissions, setNewRolePermissions] = useState<string[]>([])
+  const [creatingRole, setCreatingRole] = useState(false)
 
   useEffect(() => {
     fetchSettings()
@@ -158,973 +153,1050 @@ export default function SettingsPage() {
     try {
       setLoading(true)
       const response = await adminAPI.getSettings()
-      const data = response.data.data
+      const data = response.data.data as Settings
       setSettings(data)
-      setSiteConfig(data.siteConfig)
-      setFeatures(data.features)
-      setNotifications(data.notifications)
+      setFeatures({
+        enableUserRegistration: data.features?.enableUserRegistration ?? true,
+        enableEvents: data.features?.enableEvents ?? true,
+        requireEmailVerification: data.features?.requireEmailVerification ?? false,
+        enableNotifications: data.features?.enableNotifications ?? true,
+        maintenanceMode: data.features?.maintenanceMode ?? false,
+      })
     } catch (err: any) {
-      console.error('Error fetching settings:', err)
-      toast.error(err.response?.data?.message || 'Failed to load settings')
+      toast.error(err.response?.data?.message || "Failed to load settings")
     } finally {
       setLoading(false)
     }
   }
 
-  const handleSaveSiteConfig = async () => {
-    try {
-      setSaving(true)
-      await adminAPI.updateSiteConfig(siteConfig)
-      toast.success('Site configuration updated successfully')
-      setHasChanges(false)
-      fetchSettings()
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Failed to update site configuration')
-    } finally {
-      setSaving(false)
-    }
-  }
+  const featuresDirty = useMemo(() => {
+    if (!settings) return false
+    return JSON.stringify(features) !== JSON.stringify(featuresFromSettings(settings))
+  }, [features, settings])
 
   const handleSaveFeatures = async () => {
     try {
       setSaving(true)
       await adminAPI.updateFeatures(features)
-      toast.success('Feature settings updated successfully')
-      setHasChanges(false)
+      toast.success("Feature settings saved")
       fetchSettings()
     } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Failed to update feature settings')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const handleSaveNotifications = async () => {
-    try {
-      setSaving(true)
-      await adminAPI.updateNotifications(notifications)
-      toast.success('Notification settings updated successfully')
-      setHasChanges(false)
-      fetchSettings()
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Failed to update notification settings')
+      toast.error(err.response?.data?.message || "Failed to save")
     } finally {
       setSaving(false)
     }
   }
 
   const handleCreateCustomRole = async () => {
-    if (!newRoleName || newRolePermissions.length === 0) {
-      toast.error('Please provide role name and at least one permission')
+    if (!newRoleName.trim() || newRolePermissions.length === 0) {
+      toast.error("Provide a role name and at least one permission")
       return
     }
-
     try {
+      setCreatingRole(true)
       await adminAPI.createCustomRole({
-        name: newRoleName,
+        name: newRoleName.trim(),
         permissions: newRolePermissions,
-        description: newRoleDescription
+        description: newRoleDescription.trim(),
       })
-      toast.success('Custom role created successfully')
-      setNewRoleName('')
-      setNewRoleDescription('')
+      toast.success("Custom role created")
+      setNewRoleName("")
+      setNewRoleDescription("")
       setNewRolePermissions([])
       fetchSettings()
     } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Failed to create custom role')
-    }
-  }
-
-  const handleDeleteCustomRole = async (roleName: string) => {
-    if (!confirm(`Are you sure you want to delete the role "${roleName}"?`)) return
-
-    try {
-      await adminAPI.deleteCustomRole(roleName)
-      toast.success('Custom role deleted successfully')
-      fetchSettings()
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Failed to delete custom role')
-    }
-  }
-
-  const handleResetSettings = async () => {
-    if (!confirm('Are you sure you want to reset all settings to defaults? This action cannot be undone.')) {
-      return
-    }
-
-    try {
-      setSaving(true)
-      await adminAPI.resetSettings()
-      toast.success('Settings reset to defaults successfully')
-      fetchSettings()
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Failed to reset settings')
+      toast.error(err.response?.data?.message || "Failed to create role")
     } finally {
-      setSaving(false)
+      setCreatingRole(false)
     }
   }
 
-  const availablePermissions = [
-    'manage_music',
-    'manage_events',
-    'manage_shows',
-    'manage_posts',
-    'approve_content',
-    'delete_content',
-    'view_analytics',
-    'delete_posts',
-    'delete_comments',
-    'ban_users',
-    'view_reports',
-    'upload_music',
-    'create_events',
-    'create_shows',
-    'create_posts',
-    'comment',
-    'like',
-    'follow'
-  ]
+  const handleDeleteCustomRole = async (name: string) => {
+    if (!confirm(`Delete the custom role "${name}"?`)) return
+    try {
+      await adminAPI.deleteCustomRole(name)
+      toast.success("Custom role deleted")
+      fetchSettings()
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Failed to delete role")
+    }
+  }
 
-  if (loading) return <PageLoader />
+  const handleAddAssignment = async (roleName: string, email: string) => {
+    try {
+      const res = await adminAPI.addRoleAssignment(roleName, email)
+      setSettings(res.data.data as Settings)
+      toast.success(`${email} added to ${roleName}`)
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Failed to assign email")
+    }
+  }
+
+  const handleRemoveAssignment = async (roleName: string, email: string) => {
+    try {
+      const res = await adminAPI.removeRoleAssignment(roleName, email)
+      setSettings(res.data.data as Settings)
+      toast.success(`${email} removed from ${roleName}`)
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Failed to remove assignment")
+    }
+  }
+
+  const handleReset = async () => {
+    try {
+      setResetting(true)
+      await adminAPI.resetSettings()
+      toast.success("Settings reset to defaults")
+      setConfirmReset(false)
+      fetchSettings()
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Failed to reset")
+    } finally {
+      setResetting(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <ProtectedRoute requiredRoles={["superadmin"]}>
+        <AdminLayout user={currentUser || undefined}>
+          <PageLoader />
+        </AdminLayout>
+      </ProtectedRoute>
+    )
+  }
 
   return (
-    <ProtectedRoute>
+    <ProtectedRoute requiredRoles={["superadmin"]}>
       <AdminLayout user={currentUser || undefined}>
         <div className="space-y-6">
           {/* Header */}
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-foreground">Settings</h1>
+              <h1 className="text-3xl font-bold text-foreground flex items-center gap-3">
+                <SettingsIcon className="h-8 w-8 text-primary" />
+                Settings
+              </h1>
               <p className="text-muted-foreground mt-1">
-                Configure platform settings and preferences
+                Configure platform features and access control.
               </p>
             </div>
             <button
-              onClick={handleResetSettings}
-              className="flex items-center gap-2 px-4 py-2 bg-destructive/10 text-destructive rounded-lg hover:bg-destructive/20 transition"
+              type="button"
+              onClick={() => setConfirmReset(true)}
+              className="inline-flex items-center gap-2 self-start rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition"
             >
               <RotateCcw className="h-4 w-4" />
-              Reset to Defaults
+              Reset to defaults
             </button>
           </div>
 
-          {/* Tabs */}
-          <div className="border-b border-border">
-            <div className="flex gap-4 overflow-x-auto">
-              <TabButton
-                icon={Globe}
-                label="Site Config"
-                active={activeTab === 'site-config'}
-                onClick={() => setActiveTab('site-config')}
-              />
-              <TabButton
-                icon={ToggleLeft}
-                label="Features"
-                active={activeTab === 'features'}
-                onClick={() => setActiveTab('features')}
-              />
-              <TabButton
-                icon={Shield}
-                label="Roles & Permissions"
-                active={activeTab === 'roles'}
-                onClick={() => setActiveTab('roles')}
-              />
-              <TabButton
-                icon={Bell}
-                label="Notifications"
-                active={activeTab === 'notifications'}
-                onClick={() => setActiveTab('notifications')}
-              />
-              <TabButton
-                icon={AlertTriangle}
-                label="Moderation"
-                active={activeTab === 'moderation'}
-                onClick={() => setActiveTab('moderation')}
-              />
+          {/* Maintenance banner */}
+          {features.maintenanceMode && (
+            <div className="flex items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
+              <Wrench className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+              <div className="text-sm">
+                <p className="font-semibold text-amber-900 dark:text-amber-200">Maintenance mode is ON</p>
+                <p className="text-amber-800/80 dark:text-amber-300/80 mt-0.5">
+                  The public site shows a maintenance page. Admin panel is unaffected.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Sidebar + content layout */}
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[240px_1fr]">
+            <aside className="lg:sticky lg:top-20 lg:self-start">
+              <nav className="flex gap-1 overflow-x-auto rounded-xl border border-border bg-card p-1 lg:flex-col lg:overflow-visible">
+                <SectionNav
+                  icon={Shield}
+                  label="Roles & Access"
+                  hint="Permissions & custom roles"
+                  active={section === "roles"}
+                  onClick={() => setSection("roles")}
+                />
+                <SectionNav
+                  icon={ToggleLeft}
+                  label="Features"
+                  hint="Toggle platform modules"
+                  active={section === "features"}
+                  dirty={featuresDirty}
+                  onClick={() => setSection("features")}
+                />
+              </nav>
+            </aside>
+
+            <div className="min-w-0 space-y-6">
+              {section === "roles" && (
+                <RolesSection
+                  settings={settings}
+                  newRoleName={newRoleName}
+                  newRoleDescription={newRoleDescription}
+                  newRolePermissions={newRolePermissions}
+                  setNewRoleName={setNewRoleName}
+                  setNewRoleDescription={setNewRoleDescription}
+                  setNewRolePermissions={setNewRolePermissions}
+                  onCreate={handleCreateCustomRole}
+                  onDelete={handleDeleteCustomRole}
+                  creating={creatingRole}
+                  onAddAssignment={handleAddAssignment}
+                  onRemoveAssignment={handleRemoveAssignment}
+                />
+              )}
+
+              {section === "features" && (
+                <FeaturesSection
+                  features={features}
+                  onChange={setFeatures}
+                  onSave={handleSaveFeatures}
+                  dirty={featuresDirty}
+                  saving={saving}
+                />
+              )}
             </div>
           </div>
-
-          {/* Tab Content */}
-          <div className="bg-card border border-border rounded-lg p-6">
-            {activeTab === 'site-config' && (
-              <div className="space-y-6">
-                <h2 className="text-xl font-semibold text-foreground">Site Configuration</h2>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-2">
-                      Platform Name
-                    </label>
-                    <input
-                      type="text"
-                      value={siteConfig.platformName}
-                      onChange={(e) => {
-                        setSiteConfig({ ...siteConfig, platformName: e.target.value })
-                        setHasChanges(true)
-                      }}
-                      className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-2">
-                      Support Email
-                    </label>
-                    <input
-                      type="email"
-                      value={siteConfig.supportEmail}
-                      onChange={(e) => {
-                        setSiteConfig({ ...siteConfig, supportEmail: e.target.value })
-                        setHasChanges(true)
-                      }}
-                      className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    />
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-foreground mb-2">
-                      Platform Description
-                    </label>
-                    <textarea
-                      value={siteConfig.platformDescription}
-                      onChange={(e) => {
-                        setSiteConfig({ ...siteConfig, platformDescription: e.target.value })
-                        setHasChanges(true)
-                      }}
-                      rows={3}
-                      className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring resize-none"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-2">
-                      Default Theme
-                    </label>
-                    <select
-                      value={siteConfig.defaultTheme}
-                      onChange={(e) => {
-                        setSiteConfig({ ...siteConfig, defaultTheme: e.target.value })
-                        setHasChanges(true)
-                      }}
-                      className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    >
-                      <option value="system">System Default</option>
-                      <option value="light">Light</option>
-                      <option value="dark">Dark</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-2">
-                      Logo URL
-                    </label>
-                    <input
-                      type="text"
-                      value={siteConfig.logo}
-                      onChange={(e) => {
-                        setSiteConfig({ ...siteConfig, logo: e.target.value })
-                        setHasChanges(true)
-                      }}
-                      placeholder="https://example.com/logo.png"
-                      className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-2">
-                      Terms of Service URL
-                    </label>
-                    <input
-                      type="text"
-                      value={siteConfig.termsUrl}
-                      onChange={(e) => {
-                        setSiteConfig({ ...siteConfig, termsUrl: e.target.value })
-                        setHasChanges(true)
-                      }}
-                      placeholder="https://example.com/terms"
-                      className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-2">
-                      Privacy Policy URL
-                    </label>
-                    <input
-                      type="text"
-                      value={siteConfig.privacyUrl}
-                      onChange={(e) => {
-                        setSiteConfig({ ...siteConfig, privacyUrl: e.target.value })
-                        setHasChanges(true)
-                      }}
-                      placeholder="https://example.com/privacy"
-                      className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    />
-                  </div>
-                </div>
-
-                <button
-                  onClick={handleSaveSiteConfig}
-                  disabled={!hasChanges || saving}
-                  className="flex items-center gap-2 px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition disabled:opacity-50"
-                >
-                  <Save className="h-4 w-4" />
-                  {saving ? 'Saving...' : 'Save Changes'}
-                </button>
-              </div>
-            )}
-
-            {activeTab === 'features' && (
-              <div className="space-y-6">
-                <h2 className="text-xl font-semibold text-foreground">Feature Toggles</h2>
-                
-                <div className="space-y-4">
-                  <ToggleRow
-                    label="User Registration"
-                    description="Allow new users to register on the platform"
-                    checked={features.enableUserRegistration}
-                    onChange={(checked) => {
-                      setFeatures({ ...features, enableUserRegistration: checked })
-                      setHasChanges(true)
-                    }}
-                  />
-                  
-                  <ToggleRow
-                    label="Music Upload"
-                    description="Allow users to upload music tracks"
-                    checked={features.enableMusicUpload}
-                    onChange={(checked) => {
-                      setFeatures({ ...features, enableMusicUpload: checked })
-                      setHasChanges(true)
-                    }}
-                  />
-                  
-                  <ToggleRow
-                    label="Community Posts"
-                    description="Enable community posting features"
-                    checked={features.enableCommunityPosts}
-                    onChange={(checked) => {
-                      setFeatures({ ...features, enableCommunityPosts: checked })
-                      setHasChanges(true)
-                    }}
-                  />
-                  
-                  <ToggleRow
-                    label="Events"
-                    description="Enable event creation and management"
-                    checked={features.enableEvents}
-                    onChange={(checked) => {
-                      setFeatures({ ...features, enableEvents: checked })
-                      setHasChanges(true)
-                    }}
-                  />
-                  
-                  <ToggleRow
-                    label="Shows"
-                    description="Enable show/video content features"
-                    checked={features.enableShows}
-                    onChange={(checked) => {
-                      setFeatures({ ...features, enableShows: checked })
-                      setHasChanges(true)
-                    }}
-                  />
-                  
-                  <ToggleRow
-                    label="Comments"
-                    description="Allow users to comment on content"
-                    checked={features.enableComments}
-                    onChange={(checked) => {
-                      setFeatures({ ...features, enableComments: checked })
-                      setHasChanges(true)
-                    }}
-                  />
-                  
-                  <ToggleRow
-                    label="Email Verification"
-                    description="Require users to verify their email address"
-                    checked={features.requireEmailVerification}
-                    onChange={(checked) => {
-                      setFeatures({ ...features, requireEmailVerification: checked })
-                      setHasChanges(true)
-                    }}
-                  />
-                  
-                  <ToggleRow
-                    label="Notifications"
-                    description="Enable platform notifications"
-                    checked={features.enableNotifications}
-                    onChange={(checked) => {
-                      setFeatures({ ...features, enableNotifications: checked })
-                      setHasChanges(true)
-                    }}
-                  />
-                  
-                  <ToggleRow
-                    label="Maintenance Mode"
-                    description="Put the platform in maintenance mode (users cannot access)"
-                    checked={features.maintenanceMode}
-                    onChange={(checked) => {
-                      setFeatures({ ...features, maintenanceMode: checked })
-                      setHasChanges(true)
-                    }}
-                    variant="warning"
-                  />
-                </div>
-
-                <button
-                  onClick={handleSaveFeatures}
-                  disabled={!hasChanges || saving}
-                  className="flex items-center gap-2 px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition disabled:opacity-50"
-                >
-                  <Save className="h-4 w-4" />
-                  {saving ? 'Saving...' : 'Save Changes'}
-                </button>
-              </div>
-            )}
-
-            {activeTab === 'roles' && settings && (
-              <div className="space-y-6">
-                <h2 className="text-xl font-semibold text-foreground">Roles & Permissions</h2>
-                
-                {/* Default Roles */}
-                <div className="space-y-4">
-                  <h3 className="text-lg font-medium text-foreground">Default Roles</h3>
-                  
-                  {Object.entries(settings.roles.permissions).map(([role, permissions]) => (
-                    <div key={role} className="p-4 bg-muted/30 rounded-lg">
-                      <div className="flex items-center justify-between mb-2">
-                        <h4 className="font-medium text-foreground capitalize">{role.replace('-', ' ')}</h4>
-                        <span className="text-sm text-muted-foreground">
-                          {permissions.length} {permissions[0] === '*' ? 'All Permissions' : 'Permissions'}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {permissions[0] === '*' ? (
-                          <span className="px-2 py-1 text-xs bg-primary/10 text-primary rounded">
-                            All Permissions
-                          </span>
-                        ) : (
-                          permissions.map((perm) => (
-                            <span key={perm} className="px-2 py-1 text-xs bg-accent text-accent-foreground rounded">
-                              {perm.replace(/_/g, ' ')}
-                            </span>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Custom Roles */}
-                <div className="space-y-4">
-                  <h3 className="text-lg font-medium text-foreground">Custom Roles</h3>
-                  
-                  {settings.roles.customRoles.length === 0 ? (
-                    <p className="text-muted-foreground text-sm">No custom roles created yet.</p>
-                  ) : (
-                    settings.roles.customRoles.map((role) => (
-                      <div key={role.name} className="p-4 bg-muted/30 rounded-lg">
-                        <div className="flex items-start justify-between mb-2">
-                          <div>
-                            <h4 className="font-medium text-foreground">{role.name}</h4>
-                            {role.description && (
-                              <p className="text-sm text-muted-foreground mt-1">{role.description}</p>
-                            )}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteCustomRole(role.name)}
-                            className="p-2 text-destructive hover:bg-destructive/10 rounded-md transition"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                        <div className="flex flex-wrap gap-2 mt-2">
-                          {role.permissions.map((perm) => (
-                            <span key={perm} className="px-2 py-1 text-xs bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded">
-                              {perm.replace(/_/g, ' ')}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ))
-                  )}
-
-                  {/* Create Custom Role */}
-                  <div className="p-4 bg-muted/30 rounded-lg space-y-4">
-                    <h4 className="font-medium text-foreground">Create Custom Role</h4>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-foreground mb-2">
-                          Role Name
-                        </label>
-                        <input
-                          type="text"
-                          value={newRoleName}
-                          onChange={(e) => setNewRoleName(e.target.value)}
-                          placeholder="e.g., Editor"
-                          className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-foreground mb-2">
-                          Description (Optional)
-                        </label>
-                        <input
-                          type="text"
-                          value={newRoleDescription}
-                          onChange={(e) => setNewRoleDescription(e.target.value)}
-                          placeholder="Brief description"
-                          className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-foreground mb-2">
-                        Permissions
-                      </label>
-                      <div className="flex flex-wrap gap-2">
-                        {availablePermissions.map((perm) => (
-                          <button
-                            key={perm}
-                            onClick={() => {
-                              if (newRolePermissions.includes(perm)) {
-                                setNewRolePermissions(newRolePermissions.filter(p => p !== perm))
-                              } else {
-                                setNewRolePermissions([...newRolePermissions, perm])
-                              }
-                            }}
-                            className={`px-3 py-1 text-sm rounded-lg transition ${
-                              newRolePermissions.includes(perm)
-                                ? 'bg-primary text-primary-foreground'
-                                : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                            }`}
-                          >
-                            {perm.replace(/_/g, ' ')}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={handleCreateCustomRole}
-                      className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition"
-                    >
-                      <Plus className="h-4 w-4" />
-                      Create Role
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'notifications' && (
-              <div className="space-y-6">
-                <h2 className="text-xl font-semibold text-foreground">Notification Settings</h2>
-                
-                {/* Email Notifications */}
-                <div className="space-y-4">
-                  <h3 className="text-lg font-medium text-foreground">Email Notifications</h3>
-                  
-                  <ToggleRow
-                    label="Enable Email Notifications"
-                    description="Master toggle for all email notifications"
-                    checked={notifications.emailNotifications.enabled}
-                    onChange={(checked) => {
-                      setNotifications({
-                        ...notifications,
-                        emailNotifications: { ...notifications.emailNotifications, enabled: checked }
-                      })
-                      setHasChanges(true)
-                    }}
-                  />
-                  
-                  <ToggleRow
-                    label="New User Signup"
-                    description="Notify admins when new users register"
-                    checked={notifications.emailNotifications.newUserSignup}
-                    onChange={(checked) => {
-                      setNotifications({
-                        ...notifications,
-                        emailNotifications: { ...notifications.emailNotifications, newUserSignup: checked }
-                      })
-                      setHasChanges(true)
-                    }}
-                    disabled={!notifications.emailNotifications.enabled}
-                  />
-                  
-                  <ToggleRow
-                    label="New Content Upload"
-                    description="Notify when new content is uploaded"
-                    checked={notifications.emailNotifications.newContentUpload}
-                    onChange={(checked) => {
-                      setNotifications({
-                        ...notifications,
-                        emailNotifications: { ...notifications.emailNotifications, newContentUpload: checked }
-                      })
-                      setHasChanges(true)
-                    }}
-                    disabled={!notifications.emailNotifications.enabled}
-                  />
-                  
-                  <ToggleRow
-                    label="Reported Content"
-                    description="Notify when content is reported"
-                    checked={notifications.emailNotifications.reportedContent}
-                    onChange={(checked) => {
-                      setNotifications({
-                        ...notifications,
-                        emailNotifications: { ...notifications.emailNotifications, reportedContent: checked }
-                      })
-                      setHasChanges(true)
-                    }}
-                    disabled={!notifications.emailNotifications.enabled}
-                  />
-                  
-                  <ToggleRow
-                    label="System Alerts"
-                    description="Notify about critical system events"
-                    checked={notifications.emailNotifications.systemAlerts}
-                    onChange={(checked) => {
-                      setNotifications({
-                        ...notifications,
-                        emailNotifications: { ...notifications.emailNotifications, systemAlerts: checked }
-                      })
-                      setHasChanges(true)
-                    }}
-                    disabled={!notifications.emailNotifications.enabled}
-                  />
-                </div>
-
-                {/* Push Notifications */}
-                <div className="space-y-4">
-                  <h3 className="text-lg font-medium text-foreground">Push Notifications</h3>
-                  
-                  <ToggleRow
-                    label="Enable Push Notifications"
-                    description="Master toggle for all push notifications"
-                    checked={notifications.pushNotifications.enabled}
-                    onChange={(checked) => {
-                      setNotifications({
-                        ...notifications,
-                        pushNotifications: { ...notifications.pushNotifications, enabled: checked }
-                      })
-                      setHasChanges(true)
-                    }}
-                  />
-                  
-                  <ToggleRow
-                    label="New Follower"
-                    description="Notify users when someone follows them"
-                    checked={notifications.pushNotifications.newFollower}
-                    onChange={(checked) => {
-                      setNotifications({
-                        ...notifications,
-                        pushNotifications: { ...notifications.pushNotifications, newFollower: checked }
-                      })
-                      setHasChanges(true)
-                    }}
-                    disabled={!notifications.pushNotifications.enabled}
-                  />
-                  
-                  <ToggleRow
-                    label="New Comment"
-                    description="Notify users about new comments on their content"
-                    checked={notifications.pushNotifications.newComment}
-                    onChange={(checked) => {
-                      setNotifications({
-                        ...notifications,
-                        pushNotifications: { ...notifications.pushNotifications, newComment: checked }
-                      })
-                      setHasChanges(true)
-                    }}
-                    disabled={!notifications.pushNotifications.enabled}
-                  />
-                  
-                  <ToggleRow
-                    label="New Like"
-                    description="Notify users when their content is liked"
-                    checked={notifications.pushNotifications.newLike}
-                    onChange={(checked) => {
-                      setNotifications({
-                        ...notifications,
-                        pushNotifications: { ...notifications.pushNotifications, newLike: checked }
-                      })
-                      setHasChanges(true)
-                    }}
-                    disabled={!notifications.pushNotifications.enabled}
-                  />
-                </div>
-
-                {/* Admin Notifications */}
-                <div className="space-y-4">
-                  <h3 className="text-lg font-medium text-foreground">Admin Notifications</h3>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-foreground mb-2">
-                        Email Digest Frequency
-                      </label>
-                      <select
-                        value={notifications.adminNotifications.emailDigest}
-                        onChange={(e) => {
-                          setNotifications({
-                            ...notifications,
-                            adminNotifications: { ...notifications.adminNotifications, emailDigest: e.target.value }
-                          })
-                          setHasChanges(true)
-                        }}
-                        className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                      >
-                        <option value="daily">Daily</option>
-                        <option value="weekly">Weekly</option>
-                        <option value="monthly">Monthly</option>
-                        <option value="never">Never</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-foreground mb-2">
-                        Report Threshold
-                      </label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={notifications.adminNotifications.reportThreshold}
-                        onChange={(e) => {
-                          setNotifications({
-                            ...notifications,
-                            adminNotifications: { ...notifications.adminNotifications, reportThreshold: Number(e.target.value) }
-                          })
-                          setHasChanges(true)
-                        }}
-                        className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Alert when content receives this many reports
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  onClick={handleSaveNotifications}
-                  disabled={!hasChanges || saving}
-                  className="flex items-center gap-2 px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition disabled:opacity-50"
-                >
-                  <Save className="h-4 w-4" />
-                  {saving ? 'Saving...' : 'Save Changes'}
-                </button>
-              </div>
-            )}
-
-            {activeTab === 'moderation' && settings && (
-              <div className="space-y-6">
-                <h2 className="text-xl font-semibold text-foreground">Content Moderation</h2>
-                
-                {/* Auto Moderation */}
-                <div className="space-y-4">
-                  <h3 className="text-lg font-medium text-foreground">Auto Moderation</h3>
-                  
-                  <ToggleRow
-                    label="Enable Auto Moderation"
-                    description="Automatically moderate content using AI/filters"
-                    checked={settings.moderation.autoModeration.enabled}
-                    onChange={async (checked) => {
-                      try {
-                        await adminAPI.updateModeration({
-                          autoModeration: { ...settings.moderation.autoModeration, enabled: checked }
-                        })
-                        toast.success('Moderation settings updated')
-                        fetchSettings()
-                      } catch (err: any) {
-                        toast.error('Failed to update moderation settings')
-                      }
-                    }}
-                  />
-                  
-                  <ToggleRow
-                    label="Profanity Filter"
-                    description="Filter out profane language from content"
-                    checked={settings.moderation.autoModeration.profanityFilter}
-                    onChange={async (checked) => {
-                      try {
-                        await adminAPI.updateModeration({
-                          autoModeration: { ...settings.moderation.autoModeration, profanityFilter: checked }
-                        })
-                        toast.success('Moderation settings updated')
-                        fetchSettings()
-                      } catch (err: any) {
-                        toast.error('Failed to update moderation settings')
-                      }
-                    }}
-                  />
-                  
-                  <ToggleRow
-                    label="Spam Detection"
-                    description="Automatically detect and flag spam content"
-                    checked={settings.moderation.autoModeration.spamDetection}
-                    onChange={async (checked) => {
-                      try {
-                        await adminAPI.updateModeration({
-                          autoModeration: { ...settings.moderation.autoModeration, spamDetection: checked }
-                        })
-                        toast.success('Moderation settings updated')
-                        fetchSettings()
-                      } catch (err: any) {
-                        toast.error('Failed to update moderation settings')
-                      }
-                    }}
-                  />
-                </div>
-
-                {/* Approval Required */}
-                <div className="space-y-4">
-                  <h3 className="text-lg font-medium text-foreground">Approval Required</h3>
-                  
-                  <ToggleRow
-                    label="Music Approval"
-                    description="Require admin approval before music is published"
-                    checked={settings.moderation.approvalRequired.music}
-                    onChange={async (checked) => {
-                      try {
-                        await adminAPI.updateModeration({
-                          approvalRequired: { ...settings.moderation.approvalRequired, music: checked }
-                        })
-                        toast.success('Moderation settings updated')
-                        fetchSettings()
-                      } catch (err: any) {
-                        toast.error('Failed to update moderation settings')
-                      }
-                    }}
-                  />
-                  
-                  <ToggleRow
-                    label="Events Approval"
-                    description="Require admin approval before events are published"
-                    checked={settings.moderation.approvalRequired.events}
-                    onChange={async (checked) => {
-                      try {
-                        await adminAPI.updateModeration({
-                          approvalRequired: { ...settings.moderation.approvalRequired, events: checked }
-                        })
-                        toast.success('Moderation settings updated')
-                        fetchSettings()
-                      } catch (err: any) {
-                        toast.error('Failed to update moderation settings')
-                      }
-                    }}
-                  />
-                  
-                  <ToggleRow
-                    label="Shows Approval"
-                    description="Require admin approval before shows are published"
-                    checked={settings.moderation.approvalRequired.shows}
-                    onChange={async (checked) => {
-                      try {
-                        await adminAPI.updateModeration({
-                          approvalRequired: { ...settings.moderation.approvalRequired, shows: checked }
-                        })
-                        toast.success('Moderation settings updated')
-                        fetchSettings()
-                      } catch (err: any) {
-                        toast.error('Failed to update moderation settings')
-                      }
-                    }}
-                  />
-                  
-                  <ToggleRow
-                    label="Posts Approval"
-                    description="Require admin approval before posts are published"
-                    checked={settings.moderation.approvalRequired.posts}
-                    onChange={async (checked) => {
-                      try {
-                        await adminAPI.updateModeration({
-                          approvalRequired: { ...settings.moderation.approvalRequired, posts: checked }
-                        })
-                        toast.success('Moderation settings updated')
-                        fetchSettings()
-                      } catch (err: any) {
-                        toast.error('Failed to update moderation settings')
-                      }
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
         </div>
+
+        {/* Reset modal */}
+        {confirmReset && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            onClick={() => !resetting && setConfirmReset(false)}
+          >
+            <div
+              className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start gap-3">
+                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                  <AlertTriangle className="h-5 w-5" />
+                </span>
+                <div>
+                  <h2 className="text-lg font-semibold text-foreground">Reset all settings?</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    This restores feature flags and roles to their factory defaults. Custom roles
+                    you&rsquo;ve created will be removed. This can&rsquo;t be undone.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmReset(false)}
+                  disabled={resetting}
+                  className="rounded-md border border-border px-3 py-2 text-sm text-foreground hover:bg-muted transition disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleReset}
+                  disabled={resetting}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground hover:opacity-90 transition disabled:opacity-50"
+                >
+                  {resetting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                  Reset everything
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </AdminLayout>
     </ProtectedRoute>
   )
 }
 
-function TabButton({ 
-  icon: Icon, 
-  label, 
-  active, 
-  onClick 
-}: { 
+// ---------------------------------------------------------------------------
+// Roles & Access section
+// ---------------------------------------------------------------------------
+
+function RolesSection({
+  settings,
+  newRoleName,
+  newRoleDescription,
+  newRolePermissions,
+  setNewRoleName,
+  setNewRoleDescription,
+  setNewRolePermissions,
+  onCreate,
+  onDelete,
+  creating,
+  onAddAssignment,
+  onRemoveAssignment,
+}: {
+  settings: Settings | null
+  newRoleName: string
+  newRoleDescription: string
+  newRolePermissions: string[]
+  setNewRoleName: (v: string) => void
+  setNewRoleDescription: (v: string) => void
+  setNewRolePermissions: (v: string[]) => void
+  onCreate: () => void
+  onDelete: (name: string) => void
+  creating: boolean
+  onAddAssignment: (roleName: string, email: string) => Promise<void>
+  onRemoveAssignment: (roleName: string, email: string) => Promise<void>
+}) {
+  const [query, setQuery] = useState("")
+
+  const togglePerm = (perm: string) => {
+    if (newRolePermissions.includes(perm)) {
+      setNewRolePermissions(newRolePermissions.filter((p) => p !== perm))
+    } else {
+      setNewRolePermissions([...newRolePermissions, perm])
+    }
+  }
+
+  const selectAllInGroup = (groupPerms: string[]) => {
+    const missing = groupPerms.filter((p) => !newRolePermissions.includes(p))
+    if (missing.length > 0) {
+      setNewRolePermissions([...newRolePermissions, ...missing])
+    } else {
+      setNewRolePermissions(newRolePermissions.filter((p) => !groupPerms.includes(p)))
+    }
+  }
+
+  // Defensive fallbacks: when the API is unreachable, returns the legacy
+  // flat shape, or hasn't been seeded, render the section against defaults
+  // instead of going blank.
+  const permissionsMap =
+    settings?.roles?.permissions && Object.keys(settings.roles.permissions).length > 0
+      ? settings.roles.permissions
+      : DEFAULT_BUILTIN_ROLES
+  const builtInRoles = Object.entries(permissionsMap)
+  const customRoles = Array.isArray(settings?.roles?.customRoles) ? settings.roles.customRoles : []
+  const assignments =
+    settings?.roles?.assignments && typeof settings.roles.assignments === "object"
+      ? settings.roles.assignments
+      : {}
+
+  // Flat list of every role name (built-in + custom) so we can show one
+  // assignment panel per role and let admins pick from a single source.
+  const allRoleNames = [
+    ...builtInRoles.map(([name]) => name),
+    ...customRoles.map((r) => r.name),
+  ]
+
+  const totalAssigned = Object.values(assignments).reduce(
+    (sum, list) => sum + (Array.isArray(list) ? list.length : 0),
+    0,
+  )
+
+  // Stats strip
+  const stats = {
+    builtIn: builtInRoles.length,
+    custom: customRoles.length,
+    assigned: totalAssigned,
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Stats strip */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatCard icon={ShieldAlert} label="Built-in roles" value={stats.builtIn} hint="Cannot be deleted" />
+        <StatCard icon={Shield} label="Custom roles" value={stats.custom} hint="Created by you" />
+        <StatCard icon={Check} label="Permissions" value={ALL_PERMISSION_KEYS.length} hint="Available to assign" />
+        <StatCard icon={Users} label="Assigned emails" value={stats.assigned} hint="Across all roles" />
+      </div>
+
+      {/* Team access — email -> role assignments */}
+      <SectionCard
+        title="Team access"
+        description="Add a team member's Gmail to a role. They'll get the role's permissions the next time they log in."
+      >
+        <div className="space-y-3">
+          {allRoleNames.map((roleName) => (
+            <RoleAssignmentRow
+              key={roleName}
+              roleName={roleName}
+              emails={assignments[roleName] || []}
+              onAdd={(email) => onAddAssignment(roleName, email)}
+              onRemove={(email) => onRemoveAssignment(roleName, email)}
+            />
+          ))}
+        </div>
+      </SectionCard>
+
+      {/* Built-in roles */}
+      <SectionCard
+        title="Built-in roles"
+        description="Default roles shipped with the platform. Permissions are managed in code."
+      >
+        <div className="grid gap-3 sm:grid-cols-2">
+          {builtInRoles.map(([role, permissions]) => {
+            const isAll = permissions[0] === "*"
+            return (
+              <div
+                key={role}
+                className="group rounded-xl border border-border bg-muted/30 p-4 transition-colors hover:border-primary/30"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="text-sm font-semibold capitalize text-foreground">{role.replace(/-/g, " ")}</h4>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                      isAll ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {isAll ? "Full access" : `${permissions.length} perms`}
+                  </span>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {isAll ? (
+                    <span className="rounded-md bg-primary/10 px-2 py-1 text-xs text-primary">
+                      All permissions
+                    </span>
+                  ) : permissions.length === 0 ? (
+                    <span className="text-xs italic text-muted-foreground">No permissions</span>
+                  ) : (
+                    permissions.map((p) => (
+                      <span
+                        key={p}
+                        title={p}
+                        className="rounded-md bg-background px-2 py-1 text-xs text-foreground/80 ring-1 ring-border"
+                      >
+                        {PERMISSION_LABELS[p] || p.replace(/_/g, " ")}
+                      </span>
+                    ))
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </SectionCard>
+
+      {/* Custom roles list */}
+      <SectionCard
+        title="Custom roles"
+        description="Combine permissions to create roles tailored to your team's workflow."
+      >
+        {customRoles.length === 0 ? (
+          <EmptyCustomRoles />
+        ) : (
+          <div className="space-y-2">
+            {customRoles.map((role) => (
+              <CustomRoleRow key={role.name} role={role} onDelete={() => onDelete(role.name)} />
+            ))}
+          </div>
+        )}
+      </SectionCard>
+
+      {/* Create custom role */}
+      <SectionCard
+        title="Create a custom role"
+        description={`${newRolePermissions.length} of ${ALL_PERMISSION_KEYS.length} permissions selected.`}
+      >
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Field label="Role name" required>
+            <Input value={newRoleName} onChange={setNewRoleName} placeholder="e.g. Finance auditor" />
+          </Field>
+          <Field label="Description" hint="Optional — appears in the role list.">
+            <Input
+              value={newRoleDescription}
+              onChange={setNewRoleDescription}
+              placeholder="What is this role for?"
+            />
+          </Field>
+        </div>
+
+        {/* Search permissions */}
+        <div className="mt-5">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-medium text-foreground">Permissions</p>
+            <div className="relative w-full max-w-xs">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search permissions"
+                className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+          </div>
+
+          {/* Grouped permissions */}
+          <div className="mt-3 space-y-3">
+            {PERMISSION_CATALOG.map((group) => {
+              const filtered = group.permissions.filter((p) =>
+                query
+                  ? p.label.toLowerCase().includes(query.toLowerCase()) ||
+                    p.description.toLowerCase().includes(query.toLowerCase()) ||
+                    p.key.toLowerCase().includes(query.toLowerCase())
+                  : true,
+              )
+              if (filtered.length === 0) return null
+              const groupKeys = group.permissions.map((p) => p.key)
+              const allSelected = groupKeys.every((k) => newRolePermissions.includes(k))
+              const someSelected = groupKeys.some((k) => newRolePermissions.includes(k))
+
+              return (
+                <div key={group.group} className="rounded-xl border border-border bg-muted/20 p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-primary/10 text-primary">
+                        <group.icon className="h-3.5 w-3.5" />
+                      </span>
+                      <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
+                        {group.group}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => selectAllInGroup(groupKeys)}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      {allSelected ? "Clear all" : someSelected ? "Select all" : "Select all"}
+                    </button>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {filtered.map((p) => {
+                      const on = newRolePermissions.includes(p.key)
+                      return (
+                        <button
+                          key={p.key}
+                          type="button"
+                          onClick={() => togglePerm(p.key)}
+                          className={`group flex items-start gap-2.5 rounded-lg border p-3 text-left transition ${
+                            on
+                              ? "border-primary/40 bg-primary/5"
+                              : "border-border bg-background hover:border-primary/30"
+                          }`}
+                        >
+                          <span
+                            className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded ${
+                              on
+                                ? "bg-primary text-primary-foreground"
+                                : "border border-input bg-background"
+                            }`}
+                          >
+                            {on && <Check className="h-3 w-3" />}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-medium text-foreground">{p.label}</span>
+                            <span className="block text-xs text-muted-foreground">{p.description}</span>
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="mt-6 flex items-center justify-end gap-2 border-t border-border pt-4">
+          {(newRoleName || newRoleDescription || newRolePermissions.length > 0) && (
+            <button
+              type="button"
+              onClick={() => {
+                setNewRoleName("")
+                setNewRoleDescription("")
+                setNewRolePermissions([])
+              }}
+              className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition"
+            >
+              <X className="h-4 w-4" />
+              Clear
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onCreate}
+            disabled={!newRoleName.trim() || newRolePermissions.length === 0 || creating}
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition disabled:opacity-50"
+          >
+            {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+            {creating ? "Creating…" : "Create role"}
+          </button>
+        </div>
+      </SectionCard>
+    </div>
+  )
+}
+
+function CustomRoleRow({ role, onDelete }: { role: CustomRole; onDelete: () => void }) {
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-xl border border-border bg-card p-4 transition-colors hover:border-primary/30">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <h4 className="font-semibold text-foreground">{role.name}</h4>
+          <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+            Custom
+          </span>
+        </div>
+        {role.description && (
+          <p className="mt-0.5 text-sm text-muted-foreground">{role.description}</p>
+        )}
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {role.permissions.map((p) => (
+            <span
+              key={p}
+              title={p}
+              className="rounded-md bg-background px-2 py-1 text-xs text-foreground/80 ring-1 ring-border"
+            >
+              {PERMISSION_LABELS[p] || p.replace(/_/g, " ")}
+            </span>
+          ))}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onDelete}
+        aria-label={`Delete ${role.name}`}
+        className="rounded-md p-2 text-destructive hover:bg-destructive/10 transition"
+      >
+        <Trash2 className="h-4 w-4" />
+      </button>
+    </div>
+  )
+}
+
+function EmptyCustomRoles() {
+  return (
+    <div className="rounded-xl border border-dashed border-border bg-muted/10 p-8 text-center">
+      <span className="mx-auto inline-flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+        <Shield className="h-5 w-5" />
+      </span>
+      <p className="mt-3 text-sm font-semibold text-foreground">No custom roles yet</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Use the form below to create your first one.
+      </p>
+    </div>
+  )
+}
+
+function RoleAssignmentRow({
+  roleName,
+  emails,
+  onAdd,
+  onRemove,
+}: {
+  roleName: string
+  emails: string[]
+  onAdd: (email: string) => Promise<void>
+  onRemove: (email: string) => Promise<void>
+}) {
+  const [input, setInput] = useState("")
+  const [busy, setBusy] = useState(false)
+
+  const submit = async () => {
+    const value = input.trim()
+    if (!value) return
+    setBusy(true)
+    try {
+      await onAdd(value)
+      setInput("")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-muted/30 p-4">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+            <Shield className="h-3.5 w-3.5" />
+          </span>
+          <h4 className="truncate text-sm font-semibold capitalize text-foreground">
+            {roleName.replace(/-/g, " ")}
+          </h4>
+        </div>
+        <span className="shrink-0 rounded-full bg-background px-2 py-0.5 text-[10px] font-semibold text-muted-foreground ring-1 ring-border">
+          {emails.length} {emails.length === 1 ? "email" : "emails"}
+        </span>
+      </div>
+
+      {/* Email chips */}
+      {emails.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {emails.map((email) => (
+            <span
+              key={email}
+              className="inline-flex items-center gap-1 rounded-full bg-background px-2.5 py-1 text-xs text-foreground ring-1 ring-border"
+            >
+              {email}
+              <button
+                type="button"
+                onClick={() => onRemove(email)}
+                aria-label={`Remove ${email}`}
+                className="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Add form */}
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+        <input
+          type="email"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault()
+              submit()
+            }
+          }}
+          placeholder="teammate@gmail.com"
+          aria-label={`Add email to ${roleName}`}
+          className="flex-1 rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+        <button
+          type="button"
+          onClick={submit}
+          disabled={!input.trim() || busy}
+          className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition disabled:opacity-50"
+        >
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+          Add
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Features section
+// ---------------------------------------------------------------------------
+
+function FeaturesSection({
+  features,
+  onChange,
+  onSave,
+  dirty,
+  saving,
+}: {
+  features: Settings["features"]
+  onChange: (next: Settings["features"]) => void
+  onSave: () => void
+  dirty: boolean
+  saving: boolean
+}) {
+  const set = <K extends keyof Settings["features"]>(key: K, value: Settings["features"][K]) =>
+    onChange({ ...features, [key]: value })
+
+  return (
+    <div className="space-y-6">
+      <SectionCard
+        title="Platform features"
+        description="Toggle behaviour for the public site and signup flow."
+        footer={<SaveBar dirty={dirty} saving={saving} onSave={onSave} />}
+      >
+        <div className="space-y-3">
+          <ToggleRow
+            title="User registration"
+            description="Allow new users to sign up. Turn off to temporarily close registration."
+            checked={features.enableUserRegistration}
+            onChange={(v) => set("enableUserRegistration", v)}
+          />
+          <ToggleRow
+            title="Events"
+            description="Master switch for organizer event listings. Disabling hides all events."
+            checked={features.enableEvents}
+            onChange={(v) => set("enableEvents", v)}
+          />
+          <ToggleRow
+            title="Email verification required"
+            description="New users must verify their email before they can purchase tickets."
+            checked={features.requireEmailVerification}
+            onChange={(v) => set("requireEmailVerification", v)}
+          />
+          <ToggleRow
+            title="Notifications"
+            description="Send transactional emails (purchase confirmations, approvals, etc.)."
+            checked={features.enableNotifications}
+            onChange={(v) => set("enableNotifications", v)}
+          />
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        title="Danger zone"
+        description="Operational controls that affect the whole platform."
+        variant="danger"
+      >
+        <div
+          className={`flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between ${
+            features.maintenanceMode
+              ? "border-amber-500/40 bg-amber-500/10"
+              : "border-border bg-muted/30"
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            <span
+              className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
+                features.maintenanceMode
+                  ? "bg-amber-500/20 text-amber-700 dark:text-amber-400"
+                  : "bg-muted text-muted-foreground"
+              }`}
+            >
+              <Wrench className="h-5 w-5" />
+            </span>
+            <div>
+              <p className="font-semibold text-foreground">Maintenance mode</p>
+              <p className="text-sm text-muted-foreground">
+                Replaces the public site with a maintenance page. The admin panel keeps working.
+              </p>
+            </div>
+          </div>
+          <Switch
+            checked={features.maintenanceMode}
+            onChange={(v) => set("maintenanceMode", v)}
+            label="Maintenance mode"
+          />
+        </div>
+      </SectionCard>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function featuresFromSettings(s: Settings): Settings["features"] {
+  return {
+    enableUserRegistration: s.features?.enableUserRegistration ?? true,
+    enableEvents: s.features?.enableEvents ?? true,
+    requireEmailVerification: s.features?.requireEmailVerification ?? false,
+    enableNotifications: s.features?.enableNotifications ?? true,
+    maintenanceMode: s.features?.maintenanceMode ?? false,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// UI primitives
+// ---------------------------------------------------------------------------
+
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  hint,
+}: {
   icon: any
   label: string
+  value: number
+  hint?: string
+}) {
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className="flex items-center gap-3">
+        <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <Icon className="h-4 w-4" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-muted-foreground">{label}</p>
+          <p className="text-xl font-bold text-foreground">{value}</p>
+        </div>
+      </div>
+      {hint && <p className="mt-2 text-[11px] text-muted-foreground">{hint}</p>}
+    </div>
+  )
+}
+
+function SectionNav({
+  icon: Icon,
+  label,
+  hint,
+  active,
+  dirty,
+  onClick,
+}: {
+  icon: any
+  label: string
+  hint?: string
   active: boolean
+  dirty?: boolean
   onClick: () => void
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className={`flex items-center gap-2 px-4 py-3 border-b-2 transition whitespace-nowrap ${
-        active
-          ? 'border-primary text-primary'
-          : 'border-transparent text-muted-foreground hover:text-foreground'
+      className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition ${
+        active ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted"
       }`}
     >
-      <Icon className="h-4 w-4" />
-      {label}
+      <span
+        className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${
+          active ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground group-hover:text-foreground"
+        }`}
+      >
+        <Icon className="h-4 w-4" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-1.5 font-medium">
+          {label}
+          {dirty && (
+            <span
+              title="Unsaved changes"
+              aria-label="Unsaved changes"
+              className="h-1.5 w-1.5 rounded-full bg-amber-500"
+            />
+          )}
+        </span>
+        {hint && <span className="block text-[11px] text-muted-foreground">{hint}</span>}
+      </span>
     </button>
   )
 }
 
+function SectionCard({
+  title,
+  description,
+  children,
+  footer,
+  variant = "default",
+}: {
+  title: string
+  description?: string
+  children: React.ReactNode
+  footer?: React.ReactNode
+  variant?: "default" | "danger"
+}) {
+  return (
+    <section
+      className={`overflow-hidden rounded-2xl border bg-card ${
+        variant === "danger" ? "border-destructive/30" : "border-border"
+      }`}
+    >
+      <header className="border-b border-border px-6 py-4">
+        <h2 className="text-base font-semibold text-foreground">{title}</h2>
+        {description && <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>}
+      </header>
+      <div className="px-6 py-5">{children}</div>
+      {footer && (
+        <div className="flex items-center justify-end gap-3 border-t border-border bg-muted/30 px-6 py-3">
+          {footer}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function SaveBar({ dirty, saving, onSave }: { dirty: boolean; saving: boolean; onSave: () => void }) {
+  return (
+    <>
+      <span className="text-xs text-muted-foreground">
+        {dirty ? "You have unsaved changes." : "All changes saved."}
+      </span>
+      <button
+        type="button"
+        onClick={onSave}
+        disabled={!dirty || saving}
+        className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition disabled:opacity-50"
+      >
+        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+        {saving ? "Saving…" : "Save changes"}
+      </button>
+    </>
+  )
+}
+
 function ToggleRow({
-  label,
+  title,
   description,
   checked,
   onChange,
-  disabled = false,
-  variant = 'default'
 }: {
-  label: string
+  title: string
   description: string
   checked: boolean
-  onChange: (checked: boolean) => void
-  disabled?: boolean
-  variant?: 'default' | 'warning'
+  onChange: (v: boolean) => void
 }) {
   return (
-    <div className={`flex items-center justify-between p-4 rounded-md ${
-      variant === 'warning' ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-muted/30 border border-border'
-    } ${disabled ? 'opacity-50' : ''}`}>
-      <div className="flex-1">
-        <h4 className="font-medium text-foreground">{label}</h4>
-        <p className="text-sm text-muted-foreground mt-1">{description}</p>
+    <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-muted/30 p-4">
+      <div className="min-w-0 flex-1">
+        <p className="font-medium text-foreground">{title}</p>
+        <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
       </div>
-      <button
-        type="button"
-        onClick={() => !disabled && onChange(!checked)}
-        disabled={disabled}
-        className={`ml-4 p-1 rounded-md transition ${
-          disabled ? 'cursor-not-allowed' : 'cursor-pointer'
-        }`}
-      >
-        {checked ? (
-          <ToggleRight className={`h-8 w-8 ${variant === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-primary'}`} />
-        ) : (
-          <ToggleLeft className="h-8 w-8 text-muted-foreground" />
-        )}
-      </button>
+      <Switch checked={checked} onChange={onChange} label={title} />
     </div>
+  )
+}
+
+function Switch({
+  checked,
+  onChange,
+  label = "Toggle",
+}: {
+  checked: boolean
+  onChange: (v: boolean) => void
+  label?: string
+}) {
+  // Native checkbox styled as a switch — the input handles aria-checked
+  // implicitly so we avoid the jsx-a11y/aria-proptypes literal-value rule.
+  return (
+    <label
+      title={label}
+      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors ${
+        checked ? "bg-primary" : "bg-muted ring-1 ring-border"
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        aria-label={label}
+        className="sr-only"
+      />
+      <span
+        className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${
+          checked ? "translate-x-5" : "translate-x-0.5"
+        }`}
+      />
+    </label>
+  )
+}
+
+function Field({
+  label,
+  hint,
+  required,
+  children,
+}: {
+  label: string
+  hint?: string
+  required?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-foreground">
+        {label} {required && <span className="text-destructive">*</span>}
+      </label>
+      {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
+      <div className="mt-2">{children}</div>
+    </div>
+  )
+}
+
+function Input({
+  value,
+  onChange,
+  type = "text",
+  placeholder,
+}: {
+  value: string
+  onChange: (v: string) => void
+  type?: string
+  placeholder?: string
+}) {
+  return (
+    <input
+      type={type}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+    />
   )
 }

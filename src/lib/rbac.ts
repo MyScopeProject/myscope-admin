@@ -123,9 +123,6 @@ export const ROUTE_ACCESS: Record<string, UserRole[]> = {
   // Step 12: payouts & finance — superadmin and event-manager
   '/payouts': ['superadmin', 'event-manager'],
   '/reports': ['superadmin'],
-  
-  // Movies Management
-  '/movies': ['superadmin', 'content-manager'],
 
   // Settings - superadmin only
   '/settings': ['superadmin'],
