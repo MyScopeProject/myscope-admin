@@ -10,6 +10,7 @@ import { ErrorMessage, EmptyState } from "@/components/ui/error-message"
 import { adminAPI } from "@/lib/apiEndpoints"
 import toast from "react-hot-toast"
 import {
+  AlertTriangle,
   Calendar,
   Search,
   MapPin,
@@ -19,6 +20,8 @@ import {
   CheckCircle,
   XCircle,
   ListChecks,
+  Loader2,
+  Trash2,
 } from "lucide-react"
 
 interface Event {
@@ -49,6 +52,10 @@ export default function EventsPage() {
   const [error, setError] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
+  const [deleteTarget, setDeleteTarget] = useState<Event | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [canForce, setCanForce] = useState(false)
 
   useEffect(() => {
     fetchEvents()
@@ -90,6 +97,39 @@ export default function EventsPage() {
       fetchEvents()
     } catch (err: any) {
       toast.error(err.response?.data?.message || "Failed to reject event")
+    }
+  }
+
+  const openDelete = (event: Event) => {
+    setDeleteError(null)
+    setCanForce(false)
+    setDeleteTarget(event)
+  }
+
+  const closeDelete = () => {
+    if (deleting) return
+    setDeleteTarget(null)
+    setDeleteError(null)
+    setCanForce(false)
+  }
+
+  const confirmDelete = async (force: boolean) => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await adminAPI.deleteEvent(deleteTarget.id, { force })
+      toast.success(force ? "Event force-deleted" : "Event deleted")
+      setDeleteTarget(null)
+      setCanForce(false)
+      fetchEvents()
+    } catch (err: any) {
+      const msg = err.response?.data?.message || "Failed to delete event"
+      const allowForce = !!err.response?.data?.data?.can_force
+      setDeleteError(msg)
+      setCanForce(allowForce)
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -265,6 +305,17 @@ export default function EventsPage() {
                           </button>
                         </div>
                       )}
+
+                      <div className="pt-2 border-t border-border">
+                        <button
+                          type="button"
+                          onClick={() => openDelete(event)}
+                          className="w-full px-3 py-2 text-sm bg-destructive/10 text-destructive rounded-md hover:bg-destructive/20 transition flex items-center justify-center gap-1.5"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Delete event
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )
@@ -272,6 +323,74 @@ export default function EventsPage() {
             </div>
           )}
         </div>
+
+        {/* Delete confirmation modal */}
+        {deleteTarget && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            onClick={closeDelete}
+          >
+            <div
+              className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start gap-3">
+                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+                  <Trash2 className="h-5 w-5" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-lg font-semibold text-foreground">Delete this event?</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    You&rsquo;re about to delete{" "}
+                    <span className="font-semibold text-foreground">&ldquo;{deleteTarget.title}&rdquo;</span>
+                    {deleteTarget.organizer?.name && (
+                      <> by <span className="font-medium text-foreground">{deleteTarget.organizer.name}</span></>
+                    )}
+                    . Ticket types and pending bookings will be removed too. This can&rsquo;t be undone.
+                  </p>
+
+                  {deleteError && (
+                    <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>{deleteError}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeDelete}
+                  disabled={deleting}
+                  className="px-3 py-2 text-sm rounded-md border border-border text-foreground hover:bg-muted transition disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                {canForce ? (
+                  <button
+                    type="button"
+                    onClick={() => confirmDelete(true)}
+                    disabled={deleting}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-md bg-destructive text-destructive-foreground hover:opacity-90 transition disabled:opacity-50"
+                  >
+                    {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <AlertTriangle className="h-4 w-4" />}
+                    Force delete
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => confirmDelete(false)}
+                    disabled={deleting}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-md bg-destructive text-destructive-foreground hover:opacity-90 transition disabled:opacity-50"
+                  >
+                    {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                    Delete event
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </AdminLayout>
     </ProtectedRoute>
   )

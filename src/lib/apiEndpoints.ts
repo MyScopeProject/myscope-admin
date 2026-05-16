@@ -22,7 +22,7 @@ export const adminAPI = {
   unbanUser: (id: string) => api.put(`/admin/users/${id}/unban`),
   deleteUser: (id: string) => api.delete(`/admin/users/${id}`),
   
-  // Event Management — backend only supports list/get/approve/reject. Create
+  // Event Management — backend supports list/get/approve/reject/delete. Create
   // and edits live with the organizer flow (organizer dashboard / API).
   getEvents: (params?: { page?: number; limit?: number; search?: string; status?: string; approvalStatus?: string }) =>
     api.get('/admin/events', { params }),
@@ -31,6 +31,8 @@ export const adminAPI = {
   rejectEvent: (id: string, reason: string) =>
     api.post(`/admin/events/${id}/reject`, { reason }),
   getEventForReview: (id: string) => api.get(`/admin/events/${id}`),
+  deleteEvent: (id: string, opts?: { force?: boolean }) =>
+    api.delete(`/admin/events/${id}`, { params: opts?.force ? { force: 'true' } : undefined }),
   
   // Movies Management
   getMovies: (params?: { page?: number; limit?: number; search?: string; genre?: string; status?: string; featured?: string }) =>
