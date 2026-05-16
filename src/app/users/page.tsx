@@ -23,13 +23,13 @@ import {
 } from "lucide-react"
 
 interface User {
-  _id: string
+  id: string
   name: string
   email: string
   role: string
   status?: string
-  createdAt: string
-  lastLogin?: string
+  created_at: string
+  last_login?: string
 }
 
 export default function UsersPage() {
@@ -201,12 +201,14 @@ export default function UsersPage() {
                 >
                   <option value="all">All Roles</option>
                   <option value="user">Users</option>
+                  <option value="organizer">Organizers</option>
+                  <option value="scanner">Scanners</option>
                   <option value="artist">Artists</option>
                   <option value="moderator">Moderators</option>
-                  <option value="superadmin">Super Admin</option>
-                  <option value="event-manager">Event Manager</option>
-                  <option value="content-manager">Content Manager</option>
                   <option value="support">Support</option>
+                  <option value="content-manager">Content Manager</option>
+                  <option value="event-manager">Event Manager</option>
+                  <option value="superadmin">Super Admin</option>
                 </select>
               </div>
               <button className="inline-flex items-center px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:opacity-90 transition">
@@ -268,7 +270,7 @@ export default function UsersPage() {
                   </thead>
                   <tbody className="divide-y divide-border">
                     {filteredUsers.map((user) => (
-                      <tr key={user._id} className="hover:bg-muted/30 transition-colors">
+                      <tr key={user.id} className="hover:bg-muted/30 transition-colors">
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center">
                             <div className="h-10 w-10 rounded-full bg-linear-to-br from-primary to-secondary flex items-center justify-center text-primary-foreground font-semibold">
@@ -312,7 +314,7 @@ export default function UsersPage() {
                           )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-muted-foreground">
-                          {new Date(user.createdAt).toLocaleDateString()}
+                          {user.created_at ? new Date(user.created_at).toLocaleDateString() : '—'}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                           <div className="flex items-center justify-end gap-2">
@@ -325,7 +327,7 @@ export default function UsersPage() {
                             </button>
                             {user.role === 'user' && (
                               <button
-                                onClick={() => handlePromoteToModerator(user._id)}
+                                onClick={() => handlePromoteToModerator(user.id)}
                                 className="p-2 text-purple-500 hover:bg-purple-500/10 rounded-lg transition"
                                 title="Promote to Moderator"
                               >
@@ -334,7 +336,7 @@ export default function UsersPage() {
                             )}
                             {user.status === 'banned' ? (
                               <button
-                                onClick={() => handleUnbanUser(user._id)}
+                                onClick={() => handleUnbanUser(user.id)}
                                 className="p-2 text-green-500 hover:bg-green-500/10 rounded-lg transition"
                                 title="Unban user"
                               >
@@ -342,7 +344,7 @@ export default function UsersPage() {
                               </button>
                             ) : (
                               <button
-                                onClick={() => handleBanUser(user._id)}
+                                onClick={() => handleBanUser(user.id)}
                                 className="p-2 text-yellow-500 hover:bg-yellow-500/10 rounded-lg transition"
                                 title="Ban user"
                               >
@@ -350,7 +352,7 @@ export default function UsersPage() {
                               </button>
                             )}
                             <button
-                              onClick={() => handleDeleteUser(user._id)}
+                              onClick={() => handleDeleteUser(user.id)}
                               className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg transition"
                               title="Delete user"
                             >
@@ -441,7 +443,7 @@ function UserModal({
     try {
       if (user) {
         // Update existing user
-        await adminAPI.updateUser(user._id, formData)
+        await adminAPI.updateUser(user.id, formData)
         toast.success("User updated successfully")
       } else {
         // Create new user
@@ -502,12 +504,14 @@ function UserModal({
               className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             >
               <option value="user">User</option>
+              <option value="organizer">Organizer</option>
+              <option value="scanner">Scanner</option>
               <option value="artist">Artist</option>
               <option value="moderator">Moderator</option>
-              <option value="superadmin">Super Admin</option>
-              <option value="event-manager">Event Manager</option>
-              <option value="content-manager">Content Manager</option>
               <option value="support">Support</option>
+              <option value="content-manager">Content Manager</option>
+              <option value="event-manager">Event Manager</option>
+              <option value="superadmin">Super Admin</option>
             </select>
           </div>
 

@@ -119,6 +119,10 @@ export const ROUTE_ACCESS: Record<string, UserRole[]> = {
 
   // Organizer applications — admins who can vouch for businesses
   '/organizers': ['superadmin', 'content-manager', 'event-manager'],
+
+  // Step 12: payouts & finance — superadmin and event-manager
+  '/payouts': ['superadmin', 'event-manager'],
+  '/reports': ['superadmin'],
   
   // Music Management
   '/music': ['superadmin', 'content-manager'],

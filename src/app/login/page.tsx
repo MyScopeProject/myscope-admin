@@ -3,8 +3,10 @@
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import toast from "react-hot-toast"
+import { GoogleLogin, type CredentialResponse } from "@react-oauth/google"
 import { useAuth } from "@/contexts/auth-context"
 import api from "@/lib/api"
+import { adminAPI } from "@/lib/apiEndpoints"
 import { Card, CardHeader, CardContent, CardFooter } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -56,6 +58,41 @@ export default function LoginPage() {
       }, 500)
     } catch (err: any) {
       const msg = err?.response?.data?.message || err?.message || 'Login failed'
+      toast.error(msg, { id: loadingToast })
+      setError(msg)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleGoogleSuccess = async (credentialResponse: CredentialResponse) => {
+    if (!credentialResponse.credential) {
+      toast.error("Google did not return a credential.")
+      return
+    }
+    setError("")
+    setLoading(true)
+    const loadingToast = toast.loading("Signing in with Google...")
+
+    try {
+      const res = await adminAPI.googleLogin(credentialResponse.credential)
+      const data = res.data
+
+      login(data.token ?? 'cookie', {
+        id: data.user.id,
+        name: data.user.name,
+        email: data.user.email,
+        role: data.user.role,
+      })
+
+      toast.success("Login successful!", { id: loadingToast })
+
+      const redirectTo = localStorage.getItem('redirectAfterLogin') || '/dashboard'
+      localStorage.removeItem('redirectAfterLogin')
+
+      setTimeout(() => router.push(redirectTo), 500)
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || 'Google login failed'
       toast.error(msg, { id: loadingToast })
       setError(msg)
     } finally {
@@ -117,6 +154,28 @@ export default function LoginPage() {
             >
               {loading ? "Signing in..." : "Sign In"}
             </Button>
+
+            <div className="relative py-1">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center text-xs">
+                <span className="px-3 bg-card text-muted-foreground">Or continue with</span>
+              </div>
+            </div>
+
+            <div className="flex justify-center">
+              <GoogleLogin
+                onSuccess={handleGoogleSuccess}
+                onError={() => {
+                  setError("Google login failed. Please try again.")
+                  toast.error("Google login failed.")
+                }}
+                theme="filled_black"
+                size="large"
+                width="320"
+              />
+            </div>
           </form>
         </CardContent>
 

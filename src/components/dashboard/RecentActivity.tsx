@@ -21,19 +21,21 @@ import {
 import Link from 'next/link';
 
 interface AdminLog {
-  _id: string;
-  admin: {
-    _id: string;
-    username: string;
+  id: string;
+  admin_id?: string;
+  admin?: {
+    id: string;
+    name?: string;
+    username?: string;
     email: string;
   };
   action: string;
-  resourceType?: string;
-  resourceId?: string;
+  resource_type?: string;
+  resource_id?: string;
   description: string;
   status: 'success' | 'error' | 'warning' | 'info';
   severity: 'low' | 'medium' | 'high' | 'critical';
-  createdAt: string;
+  created_at: string;
   metadata?: {
     duration?: number;
     affectedUsers?: number;
@@ -203,7 +205,7 @@ export default function RecentActivity() {
           </div>
         ) : (
           logs.map((log) => {
-            const ActionIcon = getActionIcon(log.resourceType);
+            const ActionIcon = getActionIcon(log.resource_type);
             const StatusIcon = STATUS_ICONS[log.status];
 
             const statusBgColor = {
@@ -222,7 +224,7 @@ export default function RecentActivity() {
 
             return (
               <div
-                key={log._id}
+                key={log.id}
                 className="flex gap-3 p-3 rounded-lg transition-colors"
                 style={{
                   border: "1px solid rgba(196, 181, 253, 0.10)",
@@ -245,7 +247,7 @@ export default function RecentActivity() {
                 <div className="flex-1 min-w-0">
                   {/* Description */}
                   <p className="text-sm line-clamp-2" style={{ color: "#F5F3FA" }}>
-                    <span className="font-medium">{log.admin?.username || 'Admin'}</span>{' '}
+                    <span className="font-medium">{log.admin?.name || log.admin?.username || 'Admin'}</span>{' '}
                     {log.description}
                   </p>
 
@@ -253,28 +255,28 @@ export default function RecentActivity() {
                   <div className="flex items-center gap-2 mt-1 flex-wrap">
                     {/* Time */}
                     <span className="text-xs" style={{ color: "#9B95B5" }}>
-                      {getTimeAgo(log.createdAt)}
+                      {getTimeAgo(log.created_at)}
                     </span>
 
                     {/* Resource Type */}
-                    {log.resourceType && (
+                    {log.resource_type && (
                       <>
                         <span className="text-xs" style={{ color: "#7A7585" }}>•</span>
                         <span className="text-xs capitalize" style={{ color: "#9B95B5" }}>
-                          {log.resourceType}
+                          {log.resource_type}
                         </span>
                       </>
                     )}
 
                     {/* Severity Badge */}
-                    {log.severity !== 'low' && (
+                    {log.severity && log.severity !== 'low' && (
                       <>
                         <span className="text-xs" style={{ color: "#7A7585" }}>•</span>
-                        <span 
+                        <span
                           className="text-xs px-2 py-0.5 rounded-full font-medium"
-                          style={{ 
-                            background: SEVERITY_COLORS[log.severity].bg,
-                            color: SEVERITY_COLORS[log.severity].text
+                          style={{
+                            background: (SEVERITY_COLORS[log.severity as keyof typeof SEVERITY_COLORS] ?? SEVERITY_COLORS.low).bg,
+                            color: (SEVERITY_COLORS[log.severity as keyof typeof SEVERITY_COLORS] ?? SEVERITY_COLORS.low).text
                           }}
                         >
                           {log.severity}

@@ -3,8 +3,10 @@ import api from './api';
 // Admin Dashboard
 export const adminAPI = {
   // Admin Auth
-  login: (email: string, password: string) => 
+  login: (email: string, password: string) =>
     api.post('/admin/login', { email, password }),
+  googleLogin: (credential: string) =>
+    api.post('/admin/google', { token: credential }),
   
   // Get dashboard stats
   getDashboard: () => api.get('/admin/dashboard'),
@@ -106,6 +108,27 @@ export const adminAPI = {
   approveOrganizer: (id: string) => api.post(`/admin/organizers/${id}/approve`),
   rejectOrganizer: (id: string, reason: string) =>
     api.post(`/admin/organizers/${id}/reject`, { reason }),
+
+  // Refunds (Step 12)
+  refundBooking: (booking_id: string, reason: string) =>
+    api.post('/admin/refunds', { booking_id, reason }),
+
+  // Payouts (Step 12)
+  getPayouts: (status?: 'requested' | 'approved' | 'paid' | 'rejected') =>
+    api.get('/admin/payouts', { params: status ? { status } : undefined }),
+  getOrganizerBalance: (organizerId: string) =>
+    api.get(`/admin/payouts/balance/${organizerId}`),
+  createPayout: (data: { organizer_id: string; amount: number; event_id?: string; notes?: string }) =>
+    api.post('/admin/payouts', data),
+  markPayoutPaid: (id: string, reference?: string) =>
+    api.post(`/admin/payouts/${id}/mark-paid`, reference ? { reference } : {}),
+  rejectPayout: (id: string, reason: string) =>
+    api.post(`/admin/payouts/${id}/reject`, { reason }),
+
+  // Finance reports (Step 12)
+  getFinanceReport: (params?: { from?: string; to?: string }) =>
+    api.get('/admin/reports/finance', { params }),
+  // CSV download is handled directly via window.open (auth via cookie)
 };
 
 // Auth endpoints (public)

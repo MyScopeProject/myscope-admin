@@ -17,7 +17,9 @@ import {
   LogOut,
   ChevronLeft,
   ScrollText,
-  Building2
+  Building2,
+  Banknote,
+  BarChart3,
 } from "lucide-react"
 import { ThemeToggle } from "../ui/theme-toggle"
 
@@ -34,6 +36,8 @@ const allNavItems: NavItem[] = [
   { name: "Events", href: "/events", icon: Calendar },
   { name: "Event Review", href: "/events/review", icon: CalendarCheck },
   { name: "Movies", href: "/movies", icon: Film },
+  { name: "Payouts", href: "/payouts", icon: Banknote },
+  { name: "Finance Reports", href: "/reports", icon: BarChart3 },
   { name: "Activity Logs", href: "/logs", icon: ScrollText },
   { name: "Settings", href: "/settings", icon: Settings },
 ]

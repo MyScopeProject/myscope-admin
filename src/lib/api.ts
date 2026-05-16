@@ -20,8 +20,9 @@ api.interceptors.response.use(
 
       switch (status) {
         case 401:
-          // Unauthorized — redirect to login. Cookie clears server-side via /api/auth/logout.
-          if (typeof window !== 'undefined') {
+          // Unauthorized — redirect to login, but only if not already there
+          // (avoids infinite reload loop when checkAuth fires on the login page itself).
+          if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
             window.location.href = '/login';
           }
           break;

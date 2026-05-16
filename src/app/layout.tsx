@@ -4,6 +4,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ToastProvider } from "@/components/providers/toast-provider";
 import { AuthProvider } from "@/contexts/auth-context";
+import { GoogleAuthProvider } from "@/components/providers/google-auth-provider";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -27,10 +28,12 @@ export default function RootLayout({
           defaultTheme="dark"
           storageKey="myscope-admin-theme"
         >
-          <AuthProvider>
-            {children}
-            <ToastProvider />
-          </AuthProvider>
+          <GoogleAuthProvider>
+            <AuthProvider>
+              {children}
+              <ToastProvider />
+            </AuthProvider>
+          </GoogleAuthProvider>
         </ThemeProvider>
       </body>
     </html>
