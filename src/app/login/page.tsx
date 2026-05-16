@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import toast from "react-hot-toast"
 import { useAuth } from "@/contexts/auth-context"
+import api from "@/lib/api"
 import { Card, CardHeader, CardContent, CardFooter } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -32,43 +33,31 @@ export default function LoginPage() {
     const loadingToast = toast.loading("Signing in...")
 
     try {
-      // Use the admin login endpoint
-      const response = await fetch("http://localhost:5000/api/admin/login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email, password }),
-      })
+      // Hits POST /api/admin/login. The api instance has withCredentials:true,
+      // so the httpOnly cookie set by the server lands in the browser automatically.
+      const res = await api.post('/admin/login', { email, password })
+      const data = res.data
 
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.message || "Login failed")
-      }
-
-      // Store auth via context (also saves to localStorage)
-      login(data.token, {
+      // Track user in React state. Token arg is unused (cookie is the source of truth).
+      login(data.token ?? 'cookie', {
         id: data.user.id,
         name: data.user.name,
         email: data.user.email,
         role: data.user.role
       })
 
-      // Success!
       toast.success("Login successful!", { id: loadingToast })
-      
-      // Check for redirect destination
+
       const redirectTo = localStorage.getItem('redirectAfterLogin') || '/dashboard'
       localStorage.removeItem('redirectAfterLogin')
-      
-      // Small delay for better UX
+
       setTimeout(() => {
         router.push(redirectTo)
       }, 500)
     } catch (err: any) {
-      toast.error(err.message, { id: loadingToast })
-      setError(err.message)
+      const msg = err?.response?.data?.message || err?.message || 'Login failed'
+      toast.error(msg, { id: loadingToast })
+      setError(msg)
     } finally {
       setLoading(false)
     }

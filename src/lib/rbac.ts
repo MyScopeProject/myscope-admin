@@ -113,6 +113,12 @@ export const ROUTE_ACCESS: Record<string, UserRole[]> = {
   
   // Event Management
   '/events': ['superadmin', 'content-manager', 'event-manager'],
+
+  // Event approval queue — same access as event management
+  '/events/review': ['superadmin', 'content-manager', 'event-manager'],
+
+  // Organizer applications — admins who can vouch for businesses
+  '/organizers': ['superadmin', 'content-manager', 'event-manager'],
   
   // Music Management
   '/music': ['superadmin', 'content-manager'],

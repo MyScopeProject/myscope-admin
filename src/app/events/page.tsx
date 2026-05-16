@@ -98,10 +98,13 @@ export default function EventsPage() {
   }
 
   const handleReject = async (id: string) => {
-    if (!confirm("Are you sure you want to reject this event?")) return
-    
+    // Reason is now required server-side. prompt() keeps this quick-and-dirty —
+    // the dedicated /events/review page has a proper modal.
+    const reason = window.prompt("Reason for rejection (required, visible to the organizer):")
+    if (!reason || !reason.trim()) return
+
     try {
-      await adminAPI.rejectEvent(id)
+      await adminAPI.rejectEvent(id, reason.trim())
       toast.success("Event rejected")
       fetchEvents()
     } catch (err: any) {

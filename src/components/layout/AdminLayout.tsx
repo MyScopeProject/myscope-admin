@@ -5,17 +5,19 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useAuth } from "@/contexts/auth-context"
 import { canAccessRoute } from "@/lib/rbac"
-import { 
-  LayoutDashboard, 
-  Users, 
-  Calendar, 
-  Film, 
+import {
+  LayoutDashboard,
+  Users,
+  Calendar,
+  CalendarCheck,
+  Film,
   Settings,
   Menu,
   X,
   LogOut,
   ChevronLeft,
-  ScrollText
+  ScrollText,
+  Building2
 } from "lucide-react"
 import { ThemeToggle } from "../ui/theme-toggle"
 
@@ -28,7 +30,9 @@ interface NavItem {
 const allNavItems: NavItem[] = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "Users", href: "/users", icon: Users },
+  { name: "Organizers", href: "/organizers", icon: Building2 },
   { name: "Events", href: "/events", icon: Calendar },
+  { name: "Event Review", href: "/events/review", icon: CalendarCheck },
   { name: "Movies", href: "/movies", icon: Film },
   { name: "Activity Logs", href: "/logs", icon: ScrollText },
   { name: "Settings", href: "/settings", icon: Settings },
@@ -65,6 +69,20 @@ export function AdminLayout({ children, user }: AdminLayoutProps) {
   const handleLogout = () => {
     logout()
   }
+
+  // The active nav item is the longest-prefix match against the current pathname.
+  // Without this, sibling items like /events and /events/review both light up on /events/review.
+  const activeHref = React.useMemo(() => {
+    if (!pathname) return null
+    let best: string | null = null
+    for (const item of navItems) {
+      const match = pathname === item.href || pathname.startsWith(`${item.href}/`)
+      if (match && (best === null || item.href.length > best.length)) {
+        best = item.href
+      }
+    }
+    return best
+  }, [navItems, pathname])
 
   return (
     <div className="min-h-screen bg-background">
@@ -114,7 +132,7 @@ export function AdminLayout({ children, user }: AdminLayoutProps) {
         <nav className="flex-1 space-y-1 p-4 overflow-y-auto h-[calc(100vh-4rem)]">
           {navItems.map((item) => {
             const Icon = item.icon
-            const isActive = pathname === item.href || pathname?.startsWith(`${item.href}/`)
+            const isActive = item.href === activeHref
             
             return (
               <Link

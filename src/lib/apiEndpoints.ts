@@ -26,8 +26,10 @@ export const adminAPI = {
   getEventById: (id: string) => api.get(`/admin/events/${id}`),
   createEvent: (data: any) => api.post('/admin/events', data),
   updateEvent: (id: string, data: any) => api.put(`/admin/events/${id}`, data),
-  approveEvent: (id: string) => api.put(`/admin/events/${id}/approve`),
-  rejectEvent: (id: string) => api.put(`/admin/events/${id}/reject`),
+  approveEvent: (id: string) => api.post(`/admin/events/${id}/approve`),
+  rejectEvent: (id: string, reason: string) =>
+    api.post(`/admin/events/${id}/reject`, { reason }),
+  getEventForReview: (id: string) => api.get(`/admin/events/${id}`),
   deleteEvent: (id: string) => api.delete(`/admin/events/${id}`),
   
   // Music Management
@@ -95,8 +97,15 @@ export const adminAPI = {
     api.get('/admin/logs/my-activity', { params: { limit } }),
   cleanupLogs: (daysToKeep: number) => 
     api.delete('/admin/logs/cleanup', { data: { daysToKeep } }),
-  exportLogs: (params?: { startDate?: string; endDate?: string; format?: string }) => 
+  exportLogs: (params?: { startDate?: string; endDate?: string; format?: string }) =>
     api.get('/admin/logs/export', { params }),
+
+  // Organizer applications (Week 3 / Step 2)
+  getOrganizers: (status: 'pending' | 'approved' | 'rejected' = 'pending') =>
+    api.get('/admin/organizers', { params: { status } }),
+  approveOrganizer: (id: string) => api.post(`/admin/organizers/${id}/approve`),
+  rejectOrganizer: (id: string, reason: string) =>
+    api.post(`/admin/organizers/${id}/reject`, { reason }),
 };
 
 // Auth endpoints (public)
