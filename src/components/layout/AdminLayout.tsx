@@ -20,6 +20,7 @@ import {
   Building2,
   Banknote,
   BarChart3,
+  Star,
 } from "lucide-react"
 import { ThemeToggle } from "../ui/theme-toggle"
 
@@ -35,6 +36,7 @@ const allNavItems: NavItem[] = [
   { name: "Organizers", href: "/organizers", icon: Building2 },
   { name: "Events", href: "/events", icon: Calendar },
   { name: "Event Review", href: "/events/review", icon: CalendarCheck },
+  { name: "Hero Carousel", href: "/hero-carousel", icon: Star },
   { name: "Payouts", href: "/payouts", icon: Banknote },
   { name: "Finance Reports", href: "/reports", icon: BarChart3 },
   { name: "Settings", href: "/settings", icon: Settings },

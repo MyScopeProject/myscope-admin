@@ -44,6 +44,15 @@ interface TicketType {
   is_active: boolean
 }
 
+type SeatingMode = "none" | "free" | "zoned" | "reserved"
+
+const SEATING_MODE_LABEL: Record<SeatingMode, string> = {
+  none: "No seating",
+  free: "Free seating",
+  zoned: "Zoned",
+  reserved: "Reserved",
+}
+
 interface EventDetail {
   id: string
   title: string
@@ -64,6 +73,7 @@ interface EventDetail {
   approval_status: "draft" | "pending" | "approved" | "rejected" | "cancelled"
   rejection_reason: string | null
   featured: boolean
+  seating_mode?: SeatingMode | null
   created_at: string
   organizer: {
     id: string
@@ -250,6 +260,11 @@ export default function AdminEventDetailPage() {
                 {event.category && (
                   <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-3 py-0.5 text-xs font-medium text-muted-foreground capitalize">
                     <Tag className="h-3 w-3" />{event.category}
+                  </span>
+                )}
+                {event.seating_mode && event.seating_mode !== "none" && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-3 py-0.5 text-xs font-medium text-muted-foreground">
+                    {SEATING_MODE_LABEL[event.seating_mode]}
                   </span>
                 )}
               </div>

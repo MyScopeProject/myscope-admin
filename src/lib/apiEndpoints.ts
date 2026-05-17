@@ -33,6 +33,8 @@ export const adminAPI = {
   getEventForReview: (id: string) => api.get(`/admin/events/${id}`),
   deleteEvent: (id: string, opts?: { force?: boolean }) =>
     api.delete(`/admin/events/${id}`, { params: opts?.force ? { force: 'true' } : undefined }),
+  setEventFeatured: (id: string, featured: boolean) =>
+    api.patch(`/admin/events/${id}/featured`, { featured }),
 
   // Settings Management
   getSettings: () => api.get('/admin/settings'),
@@ -85,6 +87,9 @@ export const adminAPI = {
   approveOrganizer: (id: string) => api.post(`/admin/organizers/${id}/approve`),
   rejectOrganizer: (id: string, reason: string) =>
     api.post(`/admin/organizers/${id}/reject`, { reason }),
+  canRevokeOrganizer: (id: string) => api.get(`/admin/organizers/${id}/can-revoke`),
+  revokeOrganizer: (id: string, reason: string, force = false) =>
+    api.post(`/admin/organizers/${id}/revoke`, { reason, force }),
 
   // Refunds (Step 12)
   refundBooking: (booking_id: string, reason: string) =>
