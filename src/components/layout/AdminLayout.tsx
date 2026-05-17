@@ -6,6 +6,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useAuth } from "@/contexts/auth-context"
 import { canAccessRoute } from "@/lib/rbac"
+import { usePendingCounts } from "@/hooks/usePendingCounts"
 import {
   LayoutDashboard,
   Users,
@@ -54,6 +55,7 @@ export function AdminLayout({ children, user }: AdminLayoutProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false)
   const pathname = usePathname()
   const { logout } = useAuth()
+  const pending = usePendingCounts(!!user)
 
   // Filter navigation items based on user's role
   const navItems = React.useMemo(() => {
@@ -156,21 +158,47 @@ export function AdminLayout({ children, user }: AdminLayoutProps) {
             const Icon = item.icon
             const isActive = item.href === activeHref
 
+            // Map each nav route to its pending count
+            const badge =
+              item.href === '/organizers' ? pending.organizers :
+              item.href === '/events/review' ? pending.eventReview :
+              item.href === '/payouts' ? pending.payouts : 0
+
+            const badgeLabel = badge > 99 ? '99+' : String(badge)
+
             return (
               <Link
                 key={item.href}
                 href={item.href}
                 onClick={() => setSidebarOpen(false)}
-                className={`group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                className={`group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                   isActive
                     ? "bg-primary/10 text-primary"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground"
                 } ${sidebarCollapsed ? "justify-center" : ""}`}
                 title={sidebarCollapsed ? item.name : undefined}
               >
-                <Icon className={`h-[18px] w-[18px] flex-shrink-0 ${isActive ? "text-primary" : ""}`} />
-                {!sidebarCollapsed && <span>{item.name}</span>}
-                {!sidebarCollapsed && isActive && (
+                {/* Icon with badge dot when collapsed */}
+                <span className="relative flex-shrink-0">
+                  <Icon className={`h-[18px] w-[18px] ${isActive ? "text-primary" : ""}`} />
+                  {badge > 0 && sidebarCollapsed && (
+                    <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
+                      {badge > 9 ? '9+' : badge}
+                    </span>
+                  )}
+                </span>
+
+                {!sidebarCollapsed && <span className="flex-1">{item.name}</span>}
+
+                {/* Inline count badge (expanded) */}
+                {!sidebarCollapsed && badge > 0 && (
+                  <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white">
+                    {badgeLabel}
+                  </span>
+                )}
+
+                {/* Active dot — only when no badge */}
+                {!sidebarCollapsed && isActive && badge === 0 && (
                   <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
                 )}
               </Link>
