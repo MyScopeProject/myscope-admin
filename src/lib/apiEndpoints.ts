@@ -36,6 +36,40 @@ export const adminAPI = {
   setEventFeatured: (id: string, featured: boolean) =>
     api.patch(`/admin/events/${id}/featured`, { featured }),
 
+  // Hero slides — admin-uploaded banners OR references to existing events.
+  // Each row carries exactly one of image_url / event_id. Public read at
+  // /api/hero-slides; admin CRUD nested under /admin/*.
+  listHeroSlides: () => api.get('/hero-slides/admin'),
+  createHeroSlide: (data: {
+    image_url?: string | null
+    event_id?: string | null
+    title?: string | null
+    subtitle?: string | null
+    link_url?: string | null
+    sort_order?: number
+    active?: boolean
+  }) => api.post('/hero-slides/admin', data),
+  updateHeroSlide: (
+    id: string,
+    data: Partial<{
+      image_url: string | null
+      event_id: string | null
+      title: string | null
+      subtitle: string | null
+      link_url: string | null
+      sort_order: number
+      active: boolean
+    }>,
+  ) => api.patch(`/hero-slides/admin/${id}`, data),
+  deleteHeroSlide: (id: string) => api.delete(`/hero-slides/admin/${id}`),
+  uploadHeroSlideImage: (file: File) => {
+    const fd = new FormData()
+    fd.append('image', file)
+    return api.post('/hero-slides/admin/upload-image', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+
   // Settings Management
   getSettings: () => api.get('/admin/settings'),
   updateSiteConfig: (data: any) => api.put('/admin/settings/site-config', data),
