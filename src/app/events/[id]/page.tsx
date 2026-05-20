@@ -66,6 +66,7 @@ interface EventDetail {
   venue_location_url: string | null
   category: string | null
   banner_url: string | null
+  layout_image_url: string | null
   price: number
   capacity: number | null
   tickets_available: number
@@ -334,6 +335,27 @@ export default function AdminEventDetailPage() {
                   {event.description || "No description provided."}
                 </p>
               </Section>
+
+              {/* Seating / zone layout image (optional) */}
+              {event.layout_image_url && (
+                <Section title="Seating / Zone Layout">
+                  <a
+                    href={event.layout_image_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block"
+                    title="Open full-size layout"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={event.layout_image_url}
+                      alt="Seating / zone layout"
+                      className="w-full rounded-lg border border-border bg-muted object-contain"
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none" }}
+                    />
+                  </a>
+                </Section>
+              )}
 
               {/* Venue */}
               <Section title="Venue & Location">
