@@ -26,6 +26,7 @@ import {
   Eye,
   ShieldAlert,
   Search,
+  MessageSquare,
 } from "lucide-react"
 
 // ---------------------------------------------------------------------------
@@ -38,6 +39,17 @@ interface CustomRole {
   permissions: string[]
 }
 
+interface SmsSettings {
+  enabled: boolean
+  bookingConfirmation: boolean
+  reminders: boolean
+  waitlist: boolean
+  cancellation: boolean
+  payout: boolean
+  soldOut: boolean
+  phoneVerification: boolean
+}
+
 interface Settings {
   features: {
     enableUserRegistration: boolean
@@ -45,6 +57,7 @@ interface Settings {
     requireEmailVerification: boolean
     enableNotifications: boolean
     maintenanceMode: boolean
+    sms: SmsSettings
   }
   roles: {
     permissions: Record<string, string[]>
@@ -101,6 +114,28 @@ const PERMISSION_CATALOG: {
   },
 ]
 
+const DEFAULT_SMS: SmsSettings = {
+  enabled: true,
+  bookingConfirmation: true,
+  reminders: true,
+  waitlist: true,
+  cancellation: true,
+  payout: true,
+  soldOut: true,
+  phoneVerification: true,
+}
+
+const smsFromSettings = (s?: Partial<SmsSettings> | null): SmsSettings => ({
+  enabled: s?.enabled ?? true,
+  bookingConfirmation: s?.bookingConfirmation ?? true,
+  reminders: s?.reminders ?? true,
+  waitlist: s?.waitlist ?? true,
+  cancellation: s?.cancellation ?? true,
+  payout: s?.payout ?? true,
+  soldOut: s?.soldOut ?? true,
+  phoneVerification: s?.phoneVerification ?? true,
+})
+
 const ALL_PERMISSION_KEYS = PERMISSION_CATALOG.flatMap((g) => g.permissions.map((p) => p.key))
 const PERMISSION_LABELS: Record<string, string> = Object.fromEntries(
   PERMISSION_CATALOG.flatMap((g) => g.permissions.map((p) => [p.key, p.label])),
@@ -137,6 +172,7 @@ export default function SettingsPage() {
     requireEmailVerification: false,
     enableNotifications: true,
     maintenanceMode: false,
+    sms: { ...DEFAULT_SMS },
   })
 
   // Custom-role form
@@ -155,13 +191,7 @@ export default function SettingsPage() {
       const response = await adminAPI.getSettings()
       const data = response.data.data as Settings
       setSettings(data)
-      setFeatures({
-        enableUserRegistration: data.features?.enableUserRegistration ?? true,
-        enableEvents: data.features?.enableEvents ?? true,
-        requireEmailVerification: data.features?.requireEmailVerification ?? false,
-        enableNotifications: data.features?.enableNotifications ?? true,
-        maintenanceMode: data.features?.maintenanceMode ?? false,
-      })
+      setFeatures(featuresFromSettings(data))
     } catch (err: any) {
       toast.error(err.response?.data?.message || "Failed to load settings")
     } finally {
@@ -882,6 +912,10 @@ function FeaturesSection({
   const set = <K extends keyof Settings["features"]>(key: K, value: Settings["features"][K]) =>
     onChange({ ...features, [key]: value })
 
+  const sms = features.sms
+  const setSms = <K extends keyof SmsSettings>(key: K, value: SmsSettings[K]) =>
+    onChange({ ...features, sms: { ...sms, [key]: value } })
+
   return (
     <div className="space-y-6">
       <SectionCard
@@ -914,6 +948,83 @@ function FeaturesSection({
             checked={features.enableNotifications}
             onChange={(v) => set("enableNotifications", v)}
           />
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        title="SMS notifications"
+        description="Control text-message alerts sent via the SMS gateway. The master switch turns off every channel at once; individual toggles fine-tune which messages go out."
+        footer={<SaveBar dirty={dirty} saving={saving} onSave={onSave} />}
+      >
+        <div className="space-y-3">
+          <div
+            className={`flex items-center justify-between gap-4 rounded-xl border p-4 ${
+              sms.enabled ? "border-primary/40 bg-primary/5" : "border-border bg-muted/30"
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              <span
+                className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
+                  sms.enabled ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+                }`}
+              >
+                <MessageSquare className="h-5 w-5" />
+              </span>
+              <div>
+                <p className="font-semibold text-foreground">SMS enabled</p>
+                <p className="text-sm text-muted-foreground">
+                  Master switch for all outbound SMS. Requires the SMS gateway token to be configured
+                  on the server.
+                </p>
+              </div>
+            </div>
+            <Switch checked={sms.enabled} onChange={(v) => setSms("enabled", v)} label="SMS enabled" />
+          </div>
+
+          <div className={sms.enabled ? "space-y-3" : "space-y-3 opacity-50 pointer-events-none"}>
+            <ToggleRow
+              title="Booking confirmation"
+              description="Text the attendee their ticket details right after a successful booking."
+              checked={sms.bookingConfirmation}
+              onChange={(v) => setSms("bookingConfirmation", v)}
+            />
+            <ToggleRow
+              title="Event reminders"
+              description="Remind attendees by SMS ahead of the event (per-event toggle also applies)."
+              checked={sms.reminders}
+              onChange={(v) => setSms("reminders", v)}
+            />
+            <ToggleRow
+              title="Waitlist openings"
+              description="Notify waitlisted attendees by SMS when tickets become available."
+              checked={sms.waitlist}
+              onChange={(v) => setSms("waitlist", v)}
+            />
+            <ToggleRow
+              title="Cancellations & refunds"
+              description="Tell attendees by SMS when their booking is cancelled or refunded."
+              checked={sms.cancellation}
+              onChange={(v) => setSms("cancellation", v)}
+            />
+            <ToggleRow
+              title="Payout paid"
+              description="Notify organizers by SMS when a payout has been marked as paid."
+              checked={sms.payout}
+              onChange={(v) => setSms("payout", v)}
+            />
+            <ToggleRow
+              title="Sold-out alerts"
+              description="Alert the organizer by SMS when their event sells out."
+              checked={sms.soldOut}
+              onChange={(v) => setSms("soldOut", v)}
+            />
+            <ToggleRow
+              title="Phone verification"
+              description="Send a one-time code to verify the attendee's phone number at checkout."
+              checked={sms.phoneVerification}
+              onChange={(v) => setSms("phoneVerification", v)}
+            />
+          </div>
         </div>
       </SectionCard>
 
@@ -968,6 +1079,7 @@ function featuresFromSettings(s: Settings): Settings["features"] {
     requireEmailVerification: s.features?.requireEmailVerification ?? false,
     enableNotifications: s.features?.enableNotifications ?? true,
     maintenanceMode: s.features?.maintenanceMode ?? false,
+    sms: smsFromSettings(s.features?.sms),
   }
 }
 
