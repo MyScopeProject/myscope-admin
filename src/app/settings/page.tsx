@@ -48,6 +48,7 @@ interface SmsSettings {
   payout: boolean
   soldOut: boolean
   phoneVerification: boolean
+  checkin: boolean
 }
 
 interface Settings {
@@ -123,6 +124,7 @@ const DEFAULT_SMS: SmsSettings = {
   payout: true,
   soldOut: true,
   phoneVerification: true,
+  checkin: true,
 }
 
 const smsFromSettings = (s?: Partial<SmsSettings> | null): SmsSettings => ({
@@ -134,6 +136,7 @@ const smsFromSettings = (s?: Partial<SmsSettings> | null): SmsSettings => ({
   payout: s?.payout ?? true,
   soldOut: s?.soldOut ?? true,
   phoneVerification: s?.phoneVerification ?? true,
+  checkin: s?.checkin ?? true,
 })
 
 const ALL_PERMISSION_KEYS = PERMISSION_CATALOG.flatMap((g) => g.permissions.map((p) => p.key))
@@ -1023,6 +1026,12 @@ function FeaturesSection({
               description="Send a one-time code to verify the attendee's phone number at checkout."
               checked={sms.phoneVerification}
               onChange={(v) => setSms("phoneVerification", v)}
+            />
+            <ToggleRow
+              title="Check-in confirmation"
+              description="Text the attendee a confirmation when they're checked in at the gate."
+              checked={sms.checkin}
+              onChange={(v) => setSms("checkin", v)}
             />
           </div>
         </div>
