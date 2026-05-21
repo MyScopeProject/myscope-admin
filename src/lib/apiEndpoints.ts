@@ -138,8 +138,18 @@ export const adminAPI = {
     api.post('/admin/payouts', data),
   approvePayout: (id: string) =>
     api.post(`/admin/payouts/${id}/approve`),
-  markPayoutPaid: (id: string, reference?: string) =>
-    api.post(`/admin/payouts/${id}/mark-paid`, reference ? { reference } : {}),
+  markPayoutPaid: (id: string, reference?: string, slipUrl?: string) =>
+    api.post(`/admin/payouts/${id}/mark-paid`, {
+      ...(reference ? { reference } : {}),
+      ...(slipUrl ? { slip_url: slipUrl } : {}),
+    }),
+  uploadPayoutSlip: (file: File) => {
+    const fd = new FormData()
+    fd.append('image', file)
+    return api.post('/admin/payouts/upload-slip', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
   rejectPayout: (id: string, reason: string) =>
     api.post(`/admin/payouts/${id}/reject`, { reason }),
 
