@@ -29,6 +29,7 @@ interface OrganizerProfile {
   user_id: string
   business_name: string
   business_type: string | null
+  profile_image_url: string | null
   nic_or_br: string | null
   phone: string | null
   bank_name: string | null
@@ -280,9 +281,19 @@ function ProfileCard({
     <div className="bg-card border border-border rounded-lg p-5 flex flex-col">
       {/* Header row */}
       <div className="flex items-start gap-3 mb-4">
-        <div className="h-12 w-12 rounded-full bg-linear-to-br from-primary to-secondary flex items-center justify-center text-primary-foreground font-semibold shrink-0">
-          {(u?.name || profile.business_name).charAt(0).toUpperCase()}
-        </div>
+        {profile.profile_image_url || u?.profile_image ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={(profile.profile_image_url || u?.profile_image) as string}
+            alt={profile.business_name}
+            className="h-12 w-12 rounded-full object-cover shrink-0 border border-border bg-muted"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = "none" }}
+          />
+        ) : (
+          <div className="h-12 w-12 rounded-full bg-linear-to-br from-primary to-secondary flex items-center justify-center text-primary-foreground font-semibold shrink-0">
+            {(u?.name || profile.business_name).charAt(0).toUpperCase()}
+          </div>
+        )}
         <div className="flex-1 min-w-0">
           <h3 className="font-semibold text-foreground truncate">{profile.business_name}</h3>
           <p className="text-xs text-muted-foreground capitalize">
