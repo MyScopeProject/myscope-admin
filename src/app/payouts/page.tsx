@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   Clock,
   Loader,
+  X,
   XCircle,
 } from "lucide-react"
 
@@ -32,11 +33,28 @@ interface Payout {
 }
 
 const TABS: { key: Status | "all"; label: string }[] = [
+  { key: "requested", label: "Requested" },
   { key: "approved", label: "Approved" },
   { key: "paid", label: "Paid" },
   { key: "rejected", label: "Rejected" },
   { key: "all", label: "All" },
 ]
+
+interface OrganizerOption {
+  id: string
+  name?: string | null
+  email?: string | null
+}
+
+interface BalanceInfo {
+  gross: number
+  fee: number
+  net: number
+  refunded: number
+  paid_out: number
+  pending: number
+  platform_fee_pct: number
+}
 
 const STATUS_BADGE: Record<Status, { label: string; cls: string; icon: React.ReactNode }> = {
   requested: { label: "Requested", cls: "bg-muted text-muted-foreground", icon: <Clock className="w-3.5 h-3.5" /> },
@@ -47,11 +65,21 @@ const STATUS_BADGE: Record<Status, { label: string; cls: string; icon: React.Rea
 
 export default function PayoutsPage() {
   const { user } = useAuth()
-  const [tab, setTab] = useState<Status | "all">("approved")
+  const [tab, setTab] = useState<Status | "all">("requested")
   const [payouts, setPayouts] = useState<Payout[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [pendingId, setPendingId] = useState<string | null>(null)
+
+  // New-payout modal
+  const [createOpen, setCreateOpen] = useState(false)
+  const [organizers, setOrganizers] = useState<OrganizerOption[]>([])
+  const [selectedOrg, setSelectedOrg] = useState("")
+  const [orgBalance, setOrgBalance] = useState<BalanceInfo | null>(null)
+  const [balanceLoading, setBalanceLoading] = useState(false)
+  const [createAmount, setCreateAmount] = useState("")
+  const [createNotes, setCreateNotes] = useState("")
+  const [creating, setCreating] = useState(false)
 
   const load = async () => {
     try {
@@ -97,22 +125,71 @@ export default function PayoutsPage() {
     }
   }
 
-  const allocate = async () => {
-    const organizerId = prompt("Organizer user ID:")
-    if (!organizerId?.trim()) return
-    const amountStr = prompt("Amount (LKR):")
-    const amount = Number(amountStr)
-    if (!Number.isFinite(amount) || amount <= 0) {
-      toast.error("Invalid amount.")
-      return
-    }
-    const notes = prompt("Notes (optional):") ?? undefined
+  const approve = async (id: string) => {
+    setPendingId(id)
     try {
-      await adminAPI.createPayout({ organizer_id: organizerId.trim(), amount, notes: notes || undefined })
-      toast.success("Payout created.")
+      await adminAPI.approvePayout(id)
+      toast.success("Payout approved.")
       load()
     } catch (e: any) {
       toast.error(e?.response?.data?.message || "Failed.")
+    } finally {
+      setPendingId(null)
+    }
+  }
+
+  const openCreate = async () => {
+    setCreateOpen(true)
+    setSelectedOrg("")
+    setOrgBalance(null)
+    setCreateAmount("")
+    setCreateNotes("")
+    if (organizers.length === 0) {
+      try {
+        const res = await adminAPI.getUsers({ role: "organizer", limit: 200 })
+        setOrganizers(res.data?.data?.users ?? res.data?.data ?? [])
+      } catch {
+        toast.error("Couldn't load organizers.")
+      }
+    }
+  }
+
+  const onSelectOrg = async (id: string) => {
+    setSelectedOrg(id)
+    setOrgBalance(null)
+    setCreateAmount("")
+    if (!id) return
+    setBalanceLoading(true)
+    try {
+      const res = await adminAPI.getOrganizerBalance(id)
+      const bal = res.data?.data?.balance as BalanceInfo
+      setOrgBalance(bal)
+      setCreateAmount(bal ? String(bal.pending) : "")
+    } catch {
+      toast.error("Couldn't load balance.")
+    } finally {
+      setBalanceLoading(false)
+    }
+  }
+
+  const submitCreate = async () => {
+    const amount = Number(createAmount)
+    if (!selectedOrg) { toast.error("Pick an organizer."); return }
+    if (!Number.isFinite(amount) || amount <= 0) { toast.error("Invalid amount."); return }
+    if (orgBalance && amount > orgBalance.pending) {
+      toast.error(`Amount exceeds available balance (LKR ${orgBalance.pending.toLocaleString()}).`)
+      return
+    }
+    setCreating(true)
+    try {
+      await adminAPI.createPayout({ organizer_id: selectedOrg, amount, notes: createNotes.trim() || undefined })
+      toast.success("Payout created.")
+      setCreateOpen(false)
+      load()
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || "Failed.")
+    } finally {
+      setCreating(false)
     }
   }
 
@@ -129,7 +206,7 @@ export default function PayoutsPage() {
             </div>
             <button
               type="button"
-              onClick={allocate}
+              onClick={openCreate}
               className="inline-flex items-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:opacity-90"
             >
               <Banknote className="w-4 h-4" /> New payout
@@ -207,6 +284,26 @@ export default function PayoutsPage() {
                         </td>
                         <td className="px-4 py-3 text-xs text-muted-foreground max-w-xs truncate" title={p.notes ?? ""}>{p.notes ?? "—"}</td>
                         <td className="px-4 py-3">
+                          {p.status === "requested" && (
+                            <div className="flex gap-1">
+                              <button
+                                type="button"
+                                onClick={() => approve(p.id)}
+                                disabled={pendingId === p.id}
+                                className="px-2 py-1 rounded text-xs bg-primary/15 text-primary hover:bg-primary/25 disabled:opacity-50"
+                              >
+                                {pendingId === p.id ? <Loader className="w-3 h-3 animate-spin" /> : "Approve"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => reject(p.id)}
+                                disabled={pendingId === p.id}
+                                className="px-2 py-1 rounded text-xs bg-destructive/15 text-destructive hover:bg-destructive/25 disabled:opacity-50"
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          )}
                           {p.status === "approved" && (
                             <div className="flex gap-1">
                               <button
@@ -236,6 +333,102 @@ export default function PayoutsPage() {
             </div>
           )}
         </div>
+
+        {/* New payout modal */}
+        {createOpen && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            onClick={() => !creating && setCreateOpen(false)}
+          >
+            <div
+              className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <h2 className="text-lg font-semibold text-foreground">New payout</h2>
+                <button type="button" onClick={() => setCreateOpen(false)} aria-label="Close" title="Close" className="rounded-md p-1 text-muted-foreground hover:bg-muted">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-4">
+                <div>
+                  <label htmlFor="org" className="mb-1.5 block text-sm font-medium text-foreground">Organizer</label>
+                  <select
+                    id="org"
+                    value={selectedOrg}
+                    onChange={(e) => onSelectOrg(e.target.value)}
+                    className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="">Select an organizer…</option>
+                    {organizers.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.name || "(no name)"}{o.email ? ` — ${o.email}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {selectedOrg && (
+                  <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
+                    {balanceLoading ? (
+                      <span className="inline-flex items-center gap-2 text-muted-foreground">
+                        <Loader className="h-3.5 w-3.5 animate-spin" /> Loading balance…
+                      </span>
+                    ) : orgBalance ? (
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Available to pay out</span>
+                        <span className="font-semibold text-foreground">LKR {orgBalance.pending.toLocaleString()}</span>
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">No balance data.</span>
+                    )}
+                  </div>
+                )}
+
+                <div>
+                  <label htmlFor="amt" className="mb-1.5 block text-sm font-medium text-foreground">Amount (LKR)</label>
+                  <input
+                    id="amt"
+                    type="number"
+                    min={1}
+                    max={orgBalance?.pending}
+                    value={createAmount}
+                    onChange={(e) => setCreateAmount(e.target.value)}
+                    className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="notes" className="mb-1.5 block text-sm font-medium text-foreground">Notes (optional)</label>
+                  <input
+                    id="notes"
+                    type="text"
+                    value={createNotes}
+                    onChange={(e) => setCreateNotes(e.target.value)}
+                    placeholder="Internal note"
+                    className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-6 flex justify-end gap-2">
+                <button type="button" onClick={() => setCreateOpen(false)} disabled={creating} className="rounded-md border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50">
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={submitCreate}
+                  disabled={creating || !selectedOrg}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                >
+                  {creating ? <Loader className="h-4 w-4 animate-spin" /> : <Banknote className="h-4 w-4" />}
+                  Create payout
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </AdminLayout>
     </ProtectedRoute>
   )

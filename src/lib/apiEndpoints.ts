@@ -136,6 +136,8 @@ export const adminAPI = {
     api.get(`/admin/payouts/balance/${organizerId}`),
   createPayout: (data: { organizer_id: string; amount: number; event_id?: string; notes?: string }) =>
     api.post('/admin/payouts', data),
+  approvePayout: (id: string) =>
+    api.post(`/admin/payouts/${id}/approve`),
   markPayoutPaid: (id: string, reference?: string) =>
     api.post(`/admin/payouts/${id}/mark-paid`, reference ? { reference } : {}),
   rejectPayout: (id: string, reason: string) =>
