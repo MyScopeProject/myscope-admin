@@ -29,6 +29,7 @@ import {
   Users,
   XCircle,
   AlertCircle,
+  SlidersHorizontal,
 } from "lucide-react"
 
 interface TicketType {
@@ -272,27 +273,39 @@ export default function AdminEventDetailPage() {
             </div>
 
             {/* Primary actions */}
-            {isPending && (
-              <div className="flex shrink-0 gap-2">
-                <button
-                  type="button"
-                  onClick={handleApprove}
-                  disabled={approving}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60"
+            <div className="flex shrink-0 flex-wrap gap-2">
+              {isPending && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleApprove}
+                    disabled={approving}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                  >
+                    {approving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowRejectModal(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm font-semibold text-destructive transition hover:bg-destructive/20"
+                  >
+                    <XCircle className="h-4 w-4" />
+                    Reject
+                  </button>
+                </>
+              )}
+              {/* Superadmin override: full event management (same as the organizer). */}
+              {currentUser?.role === "superadmin" &&
+                (event.approval_status === "approved" || event.approval_status === "pending") && (
+                <Link
+                  href={`/events/${event.id}/manage`}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition hover:opacity-90"
                 >
-                  {approving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
-                  Approve
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowRejectModal(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm font-semibold text-destructive transition hover:bg-destructive/20"
-                >
-                  <XCircle className="h-4 w-4" />
-                  Reject
-                </button>
-              </div>
-            )}
+                  <SlidersHorizontal className="h-4 w-4" /> Manage event
+                </Link>
+              )}
+            </div>
           </div>
 
           {/* Rejection reason banner */}

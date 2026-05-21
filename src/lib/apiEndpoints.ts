@@ -159,6 +159,49 @@ export const adminAPI = {
   // CSV download is handled directly via window.open (auth via cookie)
 };
 
+// Admin event management — superadmin override that reuses the organizer
+// event endpoints. The admin's superadmin cookie passes the organizer role
+// gate + ownership check (loadOwnedEvent allows superadmin), so the admin can
+// manage any organizer's event exactly like its owner.
+export const adminEventManage = {
+  get: (id: string) => api.get(`/organizer/events/${id}`),
+  update: (id: string, data: any) => api.patch(`/organizer/events/${id}`, data),
+  pauseSales: (id: string) => api.post(`/organizer/events/${id}/pause-sales`),
+  resumeSales: (id: string) => api.post(`/organizer/events/${id}/resume-sales`),
+  cancel: (id: string, reason?: string) =>
+    api.post(`/organizer/events/${id}/cancel`, reason ? { reason } : {}),
+  announce: (id: string, body: { message: string; channel: 'email' | 'sms' | 'both' }) =>
+    api.post(`/organizer/events/${id}/announce`, body),
+
+  // Ticket types
+  listTicketTypes: (id: string) => api.get(`/organizer/events/${id}/ticket-types`),
+  createTicketType: (id: string, data: any) =>
+    api.post(`/organizer/events/${id}/ticket-types`, data),
+  updateTicketType: (id: string, ttId: string, data: any) =>
+    api.patch(`/organizer/events/${id}/ticket-types/${ttId}`, data),
+  deleteTicketType: (id: string, ttId: string) =>
+    api.delete(`/organizer/events/${id}/ticket-types/${ttId}`),
+
+  // Attendees / bookings
+  bookings: (id: string) => api.get(`/organizer/events/${id}/bookings`),
+  resendBooking: (id: string, bookingId: string) =>
+    api.post(`/organizer/events/${id}/bookings/${bookingId}/resend`),
+  refundBooking: (id: string, bookingId: string) =>
+    api.post(`/organizer/events/${id}/bookings/${bookingId}/refund`),
+  checkInStatus: (id: string) => api.get(`/organizer/events/${id}/check-in-status`),
+
+  // Promo codes
+  listPromos: (id: string) => api.get(`/organizer/events/${id}/promo-codes`),
+  createPromo: (id: string, data: any) => api.post(`/organizer/events/${id}/promo-codes`, data),
+  updatePromo: (id: string, codeId: string, data: any) =>
+    api.patch(`/organizer/events/${id}/promo-codes/${codeId}`, data),
+  deletePromo: (id: string, codeId: string) =>
+    api.delete(`/organizer/events/${id}/promo-codes/${codeId}`),
+
+  // Waitlist
+  waitlist: (id: string) => api.get(`/organizer/events/${id}/waitlist`),
+};
+
 // Auth endpoints (public)
 export const authAPI = {
   login: (email: string, password: string) => 
