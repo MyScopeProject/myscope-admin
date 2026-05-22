@@ -250,6 +250,33 @@ export const venueTemplatesAPI = {
   update: (id: string, data: VenueTemplatePayload) =>
     api.put(`/venue-layouts/admin/templates/${id}`, data),
   remove: (id: string) => api.delete(`/venue-layouts/admin/templates/${id}`),
+  // Generate event_seats for an event from a layout. section_ticket_map keys are
+  // layout section names, values are this event's ticket_type ids.
+  applyToEvent: (layoutId: string, body: { event_id: string; section_ticket_map: Record<string, string> }) =>
+    api.post(`/venue-layouts/${layoutId}/apply-to-event`, body),
+}
+
+// Tier 3 custom-layout requests — reserved events submitted without a seat map,
+// awaiting an admin to build + apply one. The list feeds the admin queue; the
+// event's ticket types (for section→price mapping) come from adminEventManage.
+export interface LayoutRequest {
+  id: string
+  title: string
+  venue_name: string | null
+  venue_address: string | null
+  start_time: string | null
+  date: string | null
+  approval_status: string
+  layout_status: string
+  layout_request_note: string | null
+  layout_floor_plan_url: string | null
+  created_at: string
+  organizer?: { id: string; name: string; email: string; profile_image?: string | null } | null
+}
+
+export const layoutRequestsAPI = {
+  list: () => api.get('/admin/events/layout-requests'),
+  ticketTypes: (eventId: string) => api.get(`/organizer/events/${eventId}/ticket-types`),
 }
 
 // Auth endpoints (public)
