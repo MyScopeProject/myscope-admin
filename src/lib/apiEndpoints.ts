@@ -202,6 +202,56 @@ export const adminEventManage = {
   waitlist: (id: string) => api.get(`/organizer/events/${id}/waitlist`),
 };
 
+// Venue templates — superadmin-curated reusable seat maps (organizer_id NULL,
+// is_template TRUE). Organizers pick these in their reserved-seating wizard and
+// price each section per event. CRUD lives under /venue-layouts/admin/*; reading
+// a single template's full layout_data reuses the shared GET /venue-layouts/:id.
+export interface VenueLayoutSeat {
+  number: string
+  type?: string
+}
+export interface VenueLayoutRow {
+  label: string
+  seats: VenueLayoutSeat[]
+}
+export interface VenueLayoutSection {
+  id?: string
+  name: string
+  color?: string
+  rows: VenueLayoutRow[]
+}
+export interface VenueLayoutData {
+  sections: VenueLayoutSection[]
+}
+export interface VenueTemplateSummary {
+  id: string
+  name: string
+  description: string | null
+  stage_position: string
+  total_seats: number
+  is_template: boolean
+  created_at: string
+  updated_at: string
+}
+export interface VenueTemplateDetail extends VenueTemplateSummary {
+  layout_data: VenueLayoutData
+}
+export interface VenueTemplatePayload {
+  name?: string
+  description?: string | null
+  stage_position?: string
+  layout_data?: VenueLayoutData
+}
+
+export const venueTemplatesAPI = {
+  list: () => api.get('/venue-layouts/admin/templates'),
+  get: (id: string) => api.get(`/venue-layouts/${id}`),
+  create: (data: VenueTemplatePayload) => api.post('/venue-layouts/admin/templates', data),
+  update: (id: string, data: VenueTemplatePayload) =>
+    api.put(`/venue-layouts/admin/templates/${id}`, data),
+  remove: (id: string) => api.delete(`/venue-layouts/admin/templates/${id}`),
+}
+
 // Auth endpoints (public)
 export const authAPI = {
   login: (email: string, password: string) => 

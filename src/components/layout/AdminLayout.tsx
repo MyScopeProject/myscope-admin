@@ -21,6 +21,7 @@ import {
   Banknote,
   BarChart3,
   Star,
+  Armchair,
 } from "lucide-react"
 import { ThemeToggle } from "../ui/theme-toggle"
 
@@ -39,6 +40,7 @@ const allNavItems: NavItem[] = [
   { name: "Hero Carousel", href: "/hero-carousel", icon: Star },
   { name: "Payouts", href: "/payouts", icon: Banknote },
   { name: "Finance Reports", href: "/reports", icon: BarChart3 },
+  { name: "Venue Templates", href: "/venues", icon: Armchair },
   { name: "Settings", href: "/settings", icon: Settings },
 ]
 

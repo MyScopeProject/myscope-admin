@@ -127,6 +127,9 @@ export const ROUTE_ACCESS: Record<string, UserRole[]> = {
   '/payouts': ['superadmin', 'event-manager'],
   '/reports': ['superadmin'],
 
+  // Venue seat-map templates — superadmin curates the shared library
+  '/venues': ['superadmin'],
+
   // Settings - superadmin only
   '/settings': ['superadmin'],
   
