@@ -70,6 +70,35 @@ export const adminAPI = {
     })
   },
 
+  // Past events — admin-curated image strip shown on the home page under
+  // "Upcoming events". Image-only; mirrors the hero-slides CRUD shape.
+  listPastEvents: () => api.get('/past-events/admin'),
+  createPastEvent: (data: {
+    image_url: string
+    title?: string | null
+    link_url?: string | null
+    sort_order?: number
+    active?: boolean
+  }) => api.post('/past-events/admin', data),
+  updatePastEvent: (
+    id: string,
+    data: Partial<{
+      image_url: string
+      title: string | null
+      link_url: string | null
+      sort_order: number
+      active: boolean
+    }>,
+  ) => api.patch(`/past-events/admin/${id}`, data),
+  deletePastEvent: (id: string) => api.delete(`/past-events/admin/${id}`),
+  uploadPastEventImage: (file: File) => {
+    const fd = new FormData()
+    fd.append('image', file)
+    return api.post('/past-events/admin/upload-image', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+
   // Settings Management
   getSettings: () => api.get('/admin/settings'),
   updateSiteConfig: (data: any) => api.put('/admin/settings/site-config', data),

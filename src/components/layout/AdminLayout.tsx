@@ -22,6 +22,7 @@ import {
   BarChart3,
   Star,
   Armchair,
+  History,
 } from "lucide-react"
 import { ThemeToggle } from "../ui/theme-toggle"
 
@@ -38,6 +39,7 @@ const allNavItems: NavItem[] = [
   { name: "Events", href: "/events", icon: Calendar },
   { name: "Event Review", href: "/events/review", icon: CalendarCheck },
   { name: "Hero Carousel", href: "/hero-carousel", icon: Star },
+  { name: "Past Events", href: "/past-events", icon: History },
   { name: "Payouts", href: "/payouts", icon: Banknote },
   { name: "Finance Reports", href: "/reports", icon: BarChart3 },
   { name: "Venue Templates", href: "/venues", icon: Armchair },

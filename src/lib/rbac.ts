@@ -120,6 +120,9 @@ export const ROUTE_ACCESS: Record<string, UserRole[]> = {
   // Hero carousel curation — public landing-page management
   '/hero-carousel': ['superadmin', 'content-manager'],
 
+  // Past events strip — public landing-page management
+  '/past-events': ['superadmin', 'content-manager'],
+
   // Organizer applications — admins who can vouch for businesses
   '/organizers': ['superadmin', 'content-manager', 'event-manager'],
 
