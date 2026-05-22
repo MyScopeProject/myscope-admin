@@ -205,7 +205,6 @@ export default function UsersPage() {
                   <option value="user">Users</option>
                   <option value="organizer">Organizers</option>
                   <option value="scanner">Scanners</option>
-                  <option value="artist">Artists</option>
                   <option value="moderator">Moderators</option>
                   <option value="support">Support</option>
                   <option value="content-manager">Content Manager</option>
@@ -416,7 +415,6 @@ function roleBadgeClass(role: string): string {
     case 'support':          return 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400'
     case 'organizer':        return 'bg-violet-500/10 text-violet-600 dark:text-violet-400'
     case 'scanner':          return 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400'
-    case 'artist':           return 'bg-pink-500/10 text-pink-600 dark:text-pink-400'
     default:                 return 'bg-muted text-muted-foreground'
   }
 }
@@ -537,7 +535,6 @@ function UserModal({
               <option value="user">User</option>
               <option value="organizer">Organizer</option>
               <option value="scanner">Scanner</option>
-              <option value="artist">Artist</option>
               <option value="moderator">Moderator</option>
               <option value="support">Support</option>
               <option value="content-manager">Content Manager</option>
