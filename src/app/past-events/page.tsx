@@ -285,7 +285,7 @@ function ItemRow({
   return (
     <li className="flex flex-col gap-4 rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-800 sm:flex-row sm:items-center">
       {/* Thumb */}
-      <div className="relative aspect-video w-full overflow-hidden rounded-md bg-gray-100 dark:bg-gray-700 sm:w-48">
+      <div className="relative aspect-square w-full overflow-hidden rounded-md bg-gray-100 dark:bg-gray-700 sm:w-40">
         {item.image_url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={item.image_url} alt={item.title || "Past event"} className="h-full w-full object-cover" />
@@ -411,7 +411,7 @@ function ItemEditor({
           <div>
             <h2 className="text-lg font-semibold">{isNew ? "Add past event" : "Edit past event"}</h2>
             <p className="mt-0.5 text-xs text-gray-500">
-              Landscape (16:9) photos look best in the scrolling strip.
+              Square (1:1) photos look best in the scrolling strip.
             </p>
           </div>
           <button
@@ -432,7 +432,7 @@ function ItemEditor({
               Image
             </label>
             {form.image_url ? (
-              <div className="relative aspect-video overflow-hidden rounded-md border border-gray-200 dark:border-gray-700">
+              <div className="relative mx-auto aspect-square w-full max-w-xs overflow-hidden rounded-md border border-gray-200 dark:border-gray-700">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={form.image_url} alt="Preview" className="h-full w-full object-cover" />
                 <label className="absolute bottom-2 right-2 cursor-pointer">
@@ -453,7 +453,7 @@ function ItemEditor({
                 </label>
               </div>
             ) : (
-              <label className="flex aspect-video cursor-pointer items-center justify-center rounded-md border-2 border-dashed border-gray-300 bg-gray-50 hover:border-blue-400 hover:bg-blue-50/50 dark:border-gray-600 dark:bg-gray-800 dark:hover:border-blue-500 dark:hover:bg-blue-900/20">
+              <label className="mx-auto flex aspect-square w-full max-w-xs cursor-pointer items-center justify-center rounded-md border-2 border-dashed border-gray-300 bg-gray-50 hover:border-blue-400 hover:bg-blue-50/50 dark:border-gray-600 dark:bg-gray-800 dark:hover:border-blue-500 dark:hover:bg-blue-900/20">
                 <input
                   type="file"
                   accept="image/*"
