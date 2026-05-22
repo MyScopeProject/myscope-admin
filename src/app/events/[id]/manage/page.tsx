@@ -10,8 +10,8 @@ import { PageLoader } from "@/components/ui/loading"
 import { adminEventManage } from "@/lib/apiEndpoints"
 import toast from "react-hot-toast"
 import {
-  ArrowLeft, Banknote, Calendar, CheckCircle2, Loader, MapPin,
-  Megaphone, Pause, Play, Plus, Ticket as TicketIcon, Trash2, Users, XCircle,
+  ArrowLeft, Banknote, Calendar, CalendarClock, CheckCircle2, Loader, MapPin,
+  Megaphone, Pause, Play, Plus, Ticket as TicketIcon, Trash2, Users, X, XCircle,
 } from "lucide-react"
 
 type Tab = "overview" | "tickets" | "attendees" | "checkin" | "promo" | "waitlist" | "comms"
@@ -38,6 +38,7 @@ export default function ManageEventPage() {
   const [tickets, setTickets] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [postponeOpen, setPostponeOpen] = useState(false)
 
   const loadEvent = useCallback(async () => {
     try {
@@ -139,12 +140,29 @@ export default function ManageEventPage() {
                     <Pause className="w-4 h-4" /> Pause sales
                   </button>
                 )}
+                <button type="button" onClick={() => setPostponeOpen(true)} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50">
+                  <CalendarClock className="w-4 h-4" /> Postpone
+                </button>
                 <button type="button" onClick={cancelEvent} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-destructive/15 text-destructive px-3 py-2 text-sm hover:bg-destructive/25 disabled:opacity-50">
                   <XCircle className="w-4 h-4" /> Cancel event
                 </button>
               </div>
             )}
           </div>
+
+          {postponeOpen && (
+            <PostponeModal
+              eventId={id}
+              currentStart={event.start_time ?? event.date ?? null}
+              currentEnd={event.end_time ?? null}
+              onClose={() => setPostponeOpen(false)}
+              onDone={(msg) => {
+                setPostponeOpen(false)
+                toast.success(msg)
+                loadEvent()
+              }}
+            />
+          )}
 
           {/* Tabs */}
           <div className="flex flex-wrap gap-2 border-b border-border pb-2">
@@ -400,5 +418,102 @@ function CommsTab({ eventId }: { eventId: string }) {
         </div>
       </div>
     </Card>
+  )
+}
+
+// ISO timestamp -> value for <input type="datetime-local"> (local time).
+function toLocalInput(iso: string | null): string {
+  if (!iso) return ""
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ""
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+// Postpone (reschedule) modal — admin override. Picks a new date/time and
+// optionally notifies confirmed attendees. Tickets stay valid.
+function PostponeModal({
+  eventId,
+  currentStart,
+  currentEnd,
+  onClose,
+  onDone,
+}: {
+  eventId: string
+  currentStart: string | null
+  currentEnd: string | null
+  onClose: () => void
+  onDone: (message: string) => void
+}) {
+  const [start, setStart] = useState(toLocalInput(currentStart))
+  const [end, setEnd] = useState(toLocalInput(currentEnd))
+  const [reason, setReason] = useState("")
+  const [notify, setNotify] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState("")
+
+  const submit = async () => {
+    if (!start) { setErr("Pick a new date and time."); return }
+    if (end && end < start) { setErr("End time must be after the new start time."); return }
+    setBusy(true)
+    setErr("")
+    try {
+      const r = await adminEventManage.postpone(eventId, {
+        new_start_time: start,
+        new_end_time: end || undefined,
+        reason: reason.trim() || undefined,
+        notify,
+      })
+      onDone(r.data?.message || "Event postponed.")
+    } catch (e: any) {
+      setErr(e?.response?.data?.message || "Failed to postpone.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => !busy && onClose()}>
+      <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">Postpone event</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">Move this event to a new date. Existing tickets stay valid.</p>
+          </div>
+          <button type="button" onClick={onClose} disabled={busy} className="rounded p-1 text-muted-foreground hover:bg-muted" aria-label="Close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {err && <div className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{err}</div>}
+
+        <div className="space-y-4">
+          <div>
+            <label htmlFor="pp-start" className="mb-1.5 block text-sm font-medium">New start <span className="text-destructive">*</span></label>
+            <input id="pp-start" type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label htmlFor="pp-end" className="mb-1.5 block text-sm font-medium">New end <span className="text-muted-foreground">(optional)</span></label>
+            <input id="pp-end" type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label htmlFor="pp-reason" className="mb-1.5 block text-sm font-medium">Reason <span className="text-muted-foreground">(optional)</span></label>
+            <textarea id="pp-reason" value={reason} onChange={(e) => setReason(e.target.value)} rows={2} maxLength={500} placeholder="Shared with attendees in the notification." className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} className="h-4 w-4 rounded border-border" />
+            Notify confirmed attendees by email &amp; SMS
+          </label>
+        </div>
+
+        <div className="mt-6 flex justify-end gap-2">
+          <button type="button" onClick={onClose} disabled={busy} className="rounded-md border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50">Cancel</button>
+          <button type="button" onClick={submit} disabled={busy || !start} className="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50">
+            {busy ? <Loader className="w-4 h-4 animate-spin" /> : <CalendarClock className="w-4 h-4" />}
+            {busy ? "Postponing…" : "Postpone event"}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
