@@ -6,7 +6,6 @@
 // Role hierarchy (higher number = more permissions)
 export const ROLE_HIERARCHY = {
   user: 1,
-  artist: 2,
   moderator: 3,
   'content-manager': 4,
   'event-manager': 4,
@@ -16,89 +15,53 @@ export const ROLE_HIERARCHY = {
 
 export type UserRole = keyof typeof ROLE_HIERARCHY;
 
-// Permission definitions
+// Permission definitions (event-ticketing scope only).
 export const PERMISSIONS = {
-  // User permissions
-  CREATE_POSTS: 'create_posts',
-  COMMENT: 'comment',
-  LIKE: 'like',
-  FOLLOW: 'follow',
-  
-  // Artist permissions
-  UPLOAD_MUSIC: 'upload_music',
-  CREATE_EVENTS: 'create_events',
-  CREATE_SHOWS: 'create_shows',
-  
-  // Moderator permissions
-  DELETE_POSTS: 'delete_posts',
-  DELETE_COMMENTS: 'delete_comments',
+  // Moderation
   BAN_USERS: 'ban_users',
   VIEW_REPORTS: 'view_reports',
-  MANAGE_POSTS: 'manage_posts',
-  
-  // Content Manager permissions
-  MANAGE_MUSIC: 'manage_music',
+
+  // Content management
   MANAGE_EVENTS: 'manage_events',
-  MANAGE_SHOWS: 'manage_shows',
   APPROVE_CONTENT: 'approve_content',
   DELETE_CONTENT: 'delete_content',
   VIEW_ANALYTICS: 'view_analytics',
-  
-  // Event Manager permissions
+
+  // Event management
   APPROVE_EVENTS: 'approve_events',
   DELETE_EVENTS: 'delete_events',
-  
-  // Support permissions
+
+  // Support
   VIEW_USERS: 'view_users',
   RESPOND_TICKETS: 'respond_tickets',
-  
-  // Superadmin permission
+
+  // Superadmin
   ALL: '*'
 } as const;
 
 // Role to permissions mapping
 export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
-  user: [
-    PERMISSIONS.CREATE_POSTS,
-    PERMISSIONS.COMMENT,
-    PERMISSIONS.LIKE,
-    PERMISSIONS.FOLLOW
-  ],
-  artist: [
-    PERMISSIONS.CREATE_POSTS,
-    PERMISSIONS.COMMENT,
-    PERMISSIONS.LIKE,
-    PERMISSIONS.FOLLOW,
-    PERMISSIONS.UPLOAD_MUSIC,
-    PERMISSIONS.CREATE_EVENTS,
-    PERMISSIONS.CREATE_SHOWS
-  ],
+  user: [],
   moderator: [
-    PERMISSIONS.DELETE_POSTS,
-    PERMISSIONS.DELETE_COMMENTS,
     PERMISSIONS.BAN_USERS,
     PERMISSIONS.VIEW_REPORTS,
-    PERMISSIONS.MANAGE_POSTS
   ],
   'content-manager': [
-    PERMISSIONS.MANAGE_MUSIC,
     PERMISSIONS.MANAGE_EVENTS,
-    PERMISSIONS.MANAGE_SHOWS,
-    PERMISSIONS.MANAGE_POSTS,
     PERMISSIONS.APPROVE_CONTENT,
     PERMISSIONS.DELETE_CONTENT,
-    PERMISSIONS.VIEW_ANALYTICS
+    PERMISSIONS.VIEW_ANALYTICS,
   ],
   'event-manager': [
     PERMISSIONS.MANAGE_EVENTS,
     PERMISSIONS.APPROVE_EVENTS,
     PERMISSIONS.DELETE_EVENTS,
-    PERMISSIONS.VIEW_ANALYTICS
+    PERMISSIONS.VIEW_ANALYTICS,
   ],
   support: [
     PERMISSIONS.VIEW_USERS,
     PERMISSIONS.VIEW_REPORTS,
-    PERMISSIONS.RESPOND_TICKETS
+    PERMISSIONS.RESPOND_TICKETS,
   ],
   superadmin: [PERMISSIONS.ALL]
 };
@@ -278,7 +241,6 @@ export function getRoleDisplayName(role: string | undefined): string {
   
   const displayNames: Record<string, string> = {
     user: 'User',
-    artist: 'Artist',
     moderator: 'Moderator',
     'content-manager': 'Content Manager',
     'event-manager': 'Event Manager',
@@ -297,7 +259,6 @@ export function getRoleBadgeColor(role: string | undefined): string {
   
   const colors: Record<string, string> = {
     user: 'bg-gray-500/10 text-gray-500',
-    artist: 'bg-blue-500/10 text-blue-500',
     moderator: 'bg-yellow-500/10 text-yellow-500',
     'content-manager': 'bg-purple-500/10 text-purple-500',
     'event-manager': 'bg-indigo-500/10 text-indigo-500',

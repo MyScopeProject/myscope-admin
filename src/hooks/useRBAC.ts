@@ -74,10 +74,7 @@ export function useRBAC() {
     canResetSettings: canPerformAction(userRole, 'resetSettings'),
     
     // Specific permission checks
-    canManageMusic: hasPermission(userRole, PERMISSIONS.MANAGE_MUSIC),
     canManageEvents: hasPermission(userRole, PERMISSIONS.MANAGE_EVENTS),
-    canManageShows: hasPermission(userRole, PERMISSIONS.MANAGE_SHOWS),
-    canManagePosts: hasPermission(userRole, PERMISSIONS.MANAGE_POSTS),
     canViewAnalytics: hasPermission(userRole, PERMISSIONS.VIEW_ANALYTICS),
     canViewReports: hasPermission(userRole, PERMISSIONS.VIEW_REPORTS),
     
