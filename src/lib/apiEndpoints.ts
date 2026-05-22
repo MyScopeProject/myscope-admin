@@ -203,6 +203,7 @@ export const adminEventManage = {
     id: string,
     body: { new_start_time?: string; reason?: string; notify?: boolean; close_sales?: boolean },
   ) => api.post(`/organizer/events/${id}/postpone`, body),
+  unpostpone: (id: string) => api.post(`/organizer/events/${id}/unpostpone`),
   announce: (id: string, body: { message: string; channel: 'email' | 'sms' | 'both' }) =>
     api.post(`/organizer/events/${id}/announce`, body),
 

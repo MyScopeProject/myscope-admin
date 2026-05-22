@@ -11,7 +11,7 @@ import { adminEventManage } from "@/lib/apiEndpoints"
 import toast from "react-hot-toast"
 import {
   ArrowLeft, Banknote, Calendar, CalendarClock, CheckCircle2, Loader, MapPin,
-  Megaphone, Pause, Play, Plus, Ticket as TicketIcon, Trash2, Users, X, XCircle,
+  Megaphone, Pause, Play, Plus, RotateCcw, Ticket as TicketIcon, Trash2, Users, X, XCircle,
 } from "lucide-react"
 
 type Tab = "overview" | "tickets" | "attendees" | "checkin" | "promo" | "waitlist" | "comms"
@@ -84,6 +84,20 @@ export default function ManageEventPage() {
     }
   }
 
+  const unpostpone = async () => {
+    if (!confirm("Undo postpone? The event returns to its scheduled date and ticket sales reopen.")) return
+    setBusy(true)
+    try {
+      const r = await adminEventManage.unpostpone(id)
+      toast.success(r.data?.message || "Postponement undone.")
+      loadEvent()
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || "Failed.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (loading) {
     return (
       <ProtectedRoute requiredRoles={["superadmin"]}>
@@ -145,9 +159,15 @@ export default function ManageEventPage() {
                     <Pause className="w-4 h-4" /> Pause sales
                   </button>
                 )}
-                <button type="button" onClick={() => setPostponeOpen(true)} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50">
-                  <CalendarClock className="w-4 h-4" /> Postpone
-                </button>
+                {event.postponed ? (
+                  <button type="button" onClick={unpostpone} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50">
+                    <RotateCcw className="w-4 h-4" /> Undo postpone
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => setPostponeOpen(true)} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50">
+                    <CalendarClock className="w-4 h-4" /> Postpone
+                  </button>
+                )}
                 <button type="button" onClick={cancelEvent} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-destructive/15 text-destructive px-3 py-2 text-sm hover:bg-destructive/25 disabled:opacity-50">
                   <XCircle className="w-4 h-4" /> Cancel event
                 </button>
