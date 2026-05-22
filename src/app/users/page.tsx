@@ -130,7 +130,7 @@ export default function UsersPage() {
 
   const stats = {
     total: users.length,
-    artists: users.filter(u => u.role === "artist").length,
+    organizers: users.filter(u => u.role === "organizer").length,
     moderators: users.filter(u => u.role === "moderator").length,
     admins: users.filter(u => ["superadmin", "event-manager", "content-manager", "support"].includes(u.role)).length,
     active: users.filter(u => u.status !== "banned").length,
@@ -174,7 +174,7 @@ export default function UsersPage() {
           {/* Stats Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
             <StatCard title="Total Users" value={stats.total} tone="primary" />
-            <StatCard title="Artists" value={stats.artists} tone="accent" />
+            <StatCard title="Organizers" value={stats.organizers} tone="accent" />
             <StatCard title="Moderators" value={stats.moderators} tone="warning" />
             <StatCard title="Admins" value={stats.admins} tone="primary" />
             <StatCard title="Active" value={stats.active} tone="success" />
