@@ -123,8 +123,13 @@ export default function ManageEventPage() {
                 <h1 className="text-2xl font-semibold tracking-tight">{event.title}</h1>
                 <span className="rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 px-2 py-0.5 text-xs">Admin override</span>
               </div>
-              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
+              <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
                 <span className="capitalize">{event.approval_status}</span>
+                {event.postponed && (
+                  <span className="rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 px-2 py-0.5 text-xs font-medium">
+                    Postponed{event.postponed_to ? ` to ${new Date(event.postponed_to).toLocaleDateString()}` : " (date TBA)"}
+                  </span>
+                )}
                 {when && <span className="inline-flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" />{new Date(when).toLocaleString()}</span>}
                 {event.venue_name && <span className="inline-flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5" />{event.venue_name}</span>}
               </div>
@@ -153,8 +158,6 @@ export default function ManageEventPage() {
           {postponeOpen && (
             <PostponeModal
               eventId={id}
-              currentStart={event.start_time ?? event.date ?? null}
-              currentEnd={event.end_time ?? null}
               onClose={() => setPostponeOpen(false)}
               onDone={(msg) => {
                 setPostponeOpen(false)
@@ -421,48 +424,34 @@ function CommsTab({ eventId }: { eventId: string }) {
   )
 }
 
-// ISO timestamp -> value for <input type="datetime-local"> (local time).
-function toLocalInput(iso: string | null): string {
-  if (!iso) return ""
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ""
-  const pad = (n: number) => String(n).padStart(2, "0")
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
-// Postpone (reschedule) modal — admin override. Picks a new date/time and
-// optionally notifies confirmed attendees. Tickets stay valid.
+// Postpone modal (admin override). Two modes: keep selling (still buyable,
+// shown as postponed) or stop sales (not buyable). New date optional — omit it
+// to postpone with the date "to be announced". Tickets stay valid either way.
 function PostponeModal({
   eventId,
-  currentStart,
-  currentEnd,
   onClose,
   onDone,
 }: {
   eventId: string
-  currentStart: string | null
-  currentEnd: string | null
   onClose: () => void
   onDone: (message: string) => void
 }) {
-  const [start, setStart] = useState(toLocalInput(currentStart))
-  const [end, setEnd] = useState(toLocalInput(currentEnd))
+  const [start, setStart] = useState("")
   const [reason, setReason] = useState("")
   const [notify, setNotify] = useState(true)
+  const [closeSales, setCloseSales] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState("")
 
   const submit = async () => {
-    if (!start) { setErr("Pick a new date and time."); return }
-    if (end && end < start) { setErr("End time must be after the new start time."); return }
     setBusy(true)
     setErr("")
     try {
       const r = await adminEventManage.postpone(eventId, {
-        new_start_time: start,
-        new_end_time: end || undefined,
+        new_start_time: start || undefined,
         reason: reason.trim() || undefined,
         notify,
+        close_sales: closeSales,
       })
       onDone(r.data?.message || "Event postponed.")
     } catch (e: any) {
@@ -472,13 +461,18 @@ function PostponeModal({
     }
   }
 
+  const modeBtn = (active: boolean) =>
+    `rounded-lg border p-3 text-left transition-colors ${
+      active ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "border-border hover:bg-muted"
+    }`
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => !busy && onClose()}>
       <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold">Postpone event</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">Move this event to a new date. Existing tickets stay valid.</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">Mark this event as postponed. Existing tickets stay valid.</p>
           </div>
           <button type="button" onClick={onClose} disabled={busy} className="rounded p-1 text-muted-foreground hover:bg-muted" aria-label="Close">
             <X className="w-5 h-5" />
@@ -488,18 +482,34 @@ function PostponeModal({
         {err && <div className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{err}</div>}
 
         <div className="space-y-4">
+          {/* Sales mode */}
           <div>
-            <label htmlFor="pp-start" className="mb-1.5 block text-sm font-medium">New start <span className="text-destructive">*</span></label>
+            <span className="mb-1.5 block text-sm font-medium">While postponed</span>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <button type="button" onClick={() => setCloseSales(false)} className={modeBtn(!closeSales)}>
+                <span className="block text-sm font-semibold">Keep selling tickets</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">Buyers can still book for the new date.</span>
+              </button>
+              <button type="button" onClick={() => setCloseSales(true)} className={modeBtn(closeSales)}>
+                <span className="block text-sm font-semibold">Stop ticket sales</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">Tickets can&rsquo;t be bought for now.</span>
+              </button>
+            </div>
+          </div>
+
+          {/* New date — optional */}
+          <div>
+            <label htmlFor="pp-start" className="mb-1.5 block text-sm font-medium">New date <span className="text-muted-foreground">(optional)</span></label>
             <input id="pp-start" type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
+            <p className="mt-1 text-xs text-muted-foreground">Leave empty to postpone with the new date announced later.</p>
           </div>
-          <div>
-            <label htmlFor="pp-end" className="mb-1.5 block text-sm font-medium">New end <span className="text-muted-foreground">(optional)</span></label>
-            <input id="pp-end" type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
-          </div>
+
+          {/* Reason */}
           <div>
             <label htmlFor="pp-reason" className="mb-1.5 block text-sm font-medium">Reason <span className="text-muted-foreground">(optional)</span></label>
             <textarea id="pp-reason" value={reason} onChange={(e) => setReason(e.target.value)} rows={2} maxLength={500} placeholder="Shared with attendees in the notification." className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
           </div>
+
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} className="h-4 w-4 rounded border-border" />
             Notify confirmed attendees by email &amp; SMS
@@ -508,7 +518,7 @@ function PostponeModal({
 
         <div className="mt-6 flex justify-end gap-2">
           <button type="button" onClick={onClose} disabled={busy} className="rounded-md border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50">Cancel</button>
-          <button type="button" onClick={submit} disabled={busy || !start} className="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50">
+          <button type="button" onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50">
             {busy ? <Loader className="w-4 h-4 animate-spin" /> : <CalendarClock className="w-4 h-4" />}
             {busy ? "Postponing…" : "Postpone event"}
           </button>

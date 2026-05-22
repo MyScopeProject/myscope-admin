@@ -201,7 +201,7 @@ export const adminEventManage = {
     api.post(`/organizer/events/${id}/cancel`, reason ? { reason } : {}),
   postpone: (
     id: string,
-    body: { new_start_time: string; new_end_time?: string; reason?: string; notify?: boolean },
+    body: { new_start_time?: string; reason?: string; notify?: boolean; close_sales?: boolean },
   ) => api.post(`/organizer/events/${id}/postpone`, body),
   announce: (id: string, body: { message: string; channel: 'email' | 'sms' | 'both' }) =>
     api.post(`/organizer/events/${id}/announce`, body),
