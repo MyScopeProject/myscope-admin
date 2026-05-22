@@ -10,6 +10,7 @@ import { adminAPI } from "@/lib/apiEndpoints"
 import {
   BarChart3,
   Banknote,
+  CalendarDays,
   Download,
   Receipt,
   TrendingDown,
@@ -25,6 +26,7 @@ interface Summary {
   booking_count: number
   refund_count: number
   payout_count: number
+  live_events: number
   platform_fee_pct: number
 }
 
@@ -148,7 +150,14 @@ export default function ReportsPage() {
           ) : data ? (
             <>
               {/* Summary cards */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                <SummaryCard
+                  icon={<CalendarDays className="w-5 h-5" />}
+                  label="Approved events"
+                  value={(data.summary.live_events ?? 0).toLocaleString()}
+                  sub="platform-wide"
+                  tone="primary"
+                />
                 <SummaryCard
                   icon={<TrendingUp className="w-5 h-5" />}
                   label="Gross revenue"
