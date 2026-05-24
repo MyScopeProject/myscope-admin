@@ -8,6 +8,7 @@ import { AdminLayout } from "@/components/layout/AdminLayout"
 import { useAuth } from "@/contexts/auth-context"
 import { PageLoader } from "@/components/ui/loading"
 import { adminAPI } from "@/lib/apiEndpoints"
+import { SeatGridPreview, type LayoutData } from "@/components/events/seat-grid-preview"
 import toast from "react-hot-toast"
 import {
   AlertTriangle,
@@ -68,6 +69,7 @@ interface EventDetail {
   category: string | null
   banner_url: string | null
   layout_image_url: string | null
+  seats_preview?: LayoutData | null
   price: number
   capacity: number | null
   tickets_available: number
@@ -367,6 +369,21 @@ export default function AdminEventDetailPage() {
                       onError={(e) => { (e.target as HTMLImageElement).style.display = "none" }}
                     />
                   </a>
+                </Section>
+              )}
+
+              {/* Reserved seat map */}
+              {event.seating_mode === "reserved" && (
+                <Section title="Seat Map">
+                  {event.seats_preview && event.seats_preview.sections.length > 0 ? (
+                    <div className="overflow-hidden rounded-lg border border-border bg-muted/20 p-3">
+                      <SeatGridPreview layout={event.seats_preview} />
+                    </div>
+                  ) : (
+                    <p className="text-sm text-amber-600 dark:text-amber-400">
+                      No seat map generated yet — this reserved event has no bookable seats, so it can&rsquo;t be sold.
+                    </p>
+                  )}
                 </Section>
               )}
 
