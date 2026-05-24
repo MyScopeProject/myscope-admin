@@ -96,6 +96,10 @@ export const ROUTE_ACCESS: Record<string, UserRole[]> = {
   // Venue seat-map templates — superadmin curates the shared library
   '/venues': ['superadmin'],
 
+  // Reserved Seating Events — superadmin builds custom seat maps + approves
+  // reserved events (seat-map build endpoints are superadmin-only).
+  '/reserved-seating-events': ['superadmin'],
+
   // Settings - superadmin only
   '/settings': ['superadmin'],
   

@@ -313,6 +313,59 @@ export const layoutRequestsAPI = {
   ticketTypes: (eventId: string) => api.get(`/organizer/events/${eventId}/ticket-types`),
 }
 
+// Reserved Seating Events — the dedicated admin section. Lists every reserved
+// event with its layout state (custom upload vs organizer grid, uploaded docs,
+// seat count) so admins can build the seat map for custom requests and then
+// approve the event for live. Building reuses the organizer seat-grid /
+// venue-layouts apply endpoints (superadmin passes their role gates).
+export interface ReservedLayoutDoc {
+  url: string
+  name: string
+  type: string
+}
+export interface ReservedEvent {
+  id: string
+  title: string
+  venue_name: string | null
+  venue_address: string | null
+  start_time: string | null
+  date: string | null
+  approval_status: string
+  layout_status: string
+  layout_source: 'grid' | 'custom' | null
+  layout_request_note: string | null
+  layout_floor_plan_url: string | null
+  layout_documents: ReservedLayoutDoc[] | null
+  layout_image_url: string | null
+  banner_url: string | null
+  created_at: string
+  seats_count: number
+  organizer?: { id: string; name: string; email: string; profile_image?: string | null } | null
+}
+export interface ReservedEventTicketType {
+  id: string
+  name: string
+  price: number | string
+}
+
+export const reservedEventsAPI = {
+  list: () => api.get('/admin/events/reserved'),
+  ticketTypes: (eventId: string) => api.get(`/organizer/events/${eventId}/ticket-types`),
+  // Build a grid seat map straight onto the event (no reusable layout saved).
+  buildGrid: (
+    eventId: string,
+    body: { layout_data: VenueLayoutData; section_ticket_map: Record<string, string> },
+  ) => api.post(`/organizer/events/${eventId}/seat-grid`, body),
+  // Apply an existing venue template to the event.
+  applyTemplate: (
+    templateId: string,
+    body: { event_id: string; section_ticket_map: Record<string, string> },
+  ) => api.post(`/venue-layouts/${templateId}/apply-to-event`, body),
+  approve: (eventId: string) => api.post(`/admin/events/${eventId}/approve`),
+  reject: (eventId: string, reason: string) =>
+    api.post(`/admin/events/${eventId}/reject`, { reason }),
+}
+
 // Auth endpoints (public)
 export const authAPI = {
   login: (email: string, password: string) => 
