@@ -20,6 +20,8 @@ import {
   IdCard,
   Loader,
   ShieldOff,
+  User,
+  MessageCircle,
 } from "lucide-react"
 
 type Status = "pending" | "approved" | "rejected"
@@ -31,7 +33,12 @@ interface OrganizerProfile {
   business_type: string | null
   profile_image_url: string | null
   nic_or_br: string | null
+  // `phone` is the witness's WhatsApp number (registration step 2).
   phone: string | null
+  witness_name: string | null
+  witness_nic: string | null
+  witness_email: string | null
+  witness_mobile: string | null
   bank_name: string | null
   bank_account_number: string | null
   bank_account_name: string | null
@@ -309,7 +316,6 @@ function ProfileCard({
       {/* Details grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
         <DetailRow icon={<Mail className="h-3.5 w-3.5" />} label="Email" value={u?.email} />
-        <DetailRow icon={<Phone className="h-3.5 w-3.5" />} label="Phone" value={profile.phone} />
         <DetailRow icon={<IdCard className="h-3.5 w-3.5" />} label="NIC / BR" value={profile.nic_or_br} />
         <DetailRow
           icon={<Landmark className="h-3.5 w-3.5" />}
@@ -336,6 +342,26 @@ function ProfileCard({
           {profile.bank_account_name && <>Account holder: {profile.bank_account_name}</>}
           {profile.bank_account_name && profile.bank_code && " · "}
           {profile.bank_code && <>Bank code: {profile.bank_code}</>}
+        </div>
+      )}
+
+      {/* Witness — collected in registration step 2. `phone` is the witness WhatsApp. */}
+      {(profile.witness_name ||
+        profile.witness_nic ||
+        profile.witness_email ||
+        profile.phone ||
+        profile.witness_mobile) && (
+        <div className="mt-3 pt-3 border-t border-border">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+            Witness
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+            <DetailRow icon={<User className="h-3.5 w-3.5" />} label="Name" value={profile.witness_name} />
+            <DetailRow icon={<IdCard className="h-3.5 w-3.5" />} label="NIC" value={profile.witness_nic} />
+            <DetailRow icon={<Mail className="h-3.5 w-3.5" />} label="Email" value={profile.witness_email} />
+            <DetailRow icon={<MessageCircle className="h-3.5 w-3.5" />} label="WhatsApp" value={profile.phone} />
+            <DetailRow icon={<Phone className="h-3.5 w-3.5" />} label="Mobile" value={profile.witness_mobile} />
+          </div>
         </div>
       )}
 
