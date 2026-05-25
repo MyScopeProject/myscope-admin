@@ -21,7 +21,6 @@ import {
   Loader,
   ShieldOff,
   User,
-  MessageCircle,
 } from "lucide-react"
 
 type Status = "pending" | "approved" | "rejected"
@@ -33,12 +32,11 @@ interface OrganizerProfile {
   business_type: string | null
   profile_image_url: string | null
   nic_or_br: string | null
-  // `phone` is the witness's WhatsApp number (registration step 2).
+  // `phone` is the witness's mobile/WhatsApp number (registration step 2).
   phone: string | null
   witness_name: string | null
   witness_nic: string | null
   witness_email: string | null
-  witness_mobile: string | null
   bank_name: string | null
   bank_account_number: string | null
   bank_account_name: string | null
@@ -345,12 +343,12 @@ function ProfileCard({
         </div>
       )}
 
-      {/* Witness — collected in registration step 2. `phone` is the witness WhatsApp. */}
+      {/* Witness — collected in registration step 2. `phone` is the witness's
+          single mobile/WhatsApp number. */}
       {(profile.witness_name ||
         profile.witness_nic ||
         profile.witness_email ||
-        profile.phone ||
-        profile.witness_mobile) && (
+        profile.phone) && (
         <div className="mt-3 pt-3 border-t border-border">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
             Witness
@@ -359,8 +357,7 @@ function ProfileCard({
             <DetailRow icon={<User className="h-3.5 w-3.5" />} label="Name" value={profile.witness_name} />
             <DetailRow icon={<IdCard className="h-3.5 w-3.5" />} label="NIC" value={profile.witness_nic} />
             <DetailRow icon={<Mail className="h-3.5 w-3.5" />} label="Email" value={profile.witness_email} />
-            <DetailRow icon={<MessageCircle className="h-3.5 w-3.5" />} label="WhatsApp" value={profile.phone} />
-            <DetailRow icon={<Phone className="h-3.5 w-3.5" />} label="Mobile" value={profile.witness_mobile} />
+            <DetailRow icon={<Phone className="h-3.5 w-3.5" />} label="Mobile (WhatsApp)" value={profile.phone} />
           </div>
         </div>
       )}
