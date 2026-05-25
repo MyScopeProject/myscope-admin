@@ -35,6 +35,9 @@ interface OrganizerProfile {
   bank_name: string | null
   bank_account_number: string | null
   bank_account_name: string | null
+  branch_name: string | null
+  bank_code: string | null
+  branch_code: string | null
   verification_status: Status
   rejection_reason: string | null
   verified_at: string | null
@@ -317,11 +320,22 @@ function ProfileCard({
               : profile.bank_name || null
           }
         />
+        <DetailRow
+          icon={<Landmark className="h-3.5 w-3.5" />}
+          label="Branch"
+          value={
+            [profile.branch_name, profile.branch_code && `(${profile.branch_code})`]
+              .filter(Boolean)
+              .join(" ") || null
+          }
+        />
       </div>
 
-      {profile.bank_account_name && (
+      {(profile.bank_account_name || profile.bank_code) && (
         <div className="text-xs text-muted-foreground mt-2">
-          Account holder: {profile.bank_account_name}
+          {profile.bank_account_name && <>Account holder: {profile.bank_account_name}</>}
+          {profile.bank_account_name && profile.bank_code && " · "}
+          {profile.bank_code && <>Bank code: {profile.bank_code}</>}
         </div>
       )}
 
