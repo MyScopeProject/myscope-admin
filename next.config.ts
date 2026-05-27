@@ -18,7 +18,9 @@ export default withSentryConfig(nextConfig, {
   project: process.env.SENTRY_PROJECT,
   authToken: process.env.SENTRY_AUTH_TOKEN,
   silent: !process.env.CI,
-  tunnelRoute: "/monitoring",
+  // tunnelRoute disabled — see myscope-web/next.config.ts for the reasoning.
+  // Same fix applies here; admin's /monitoring also 404'd in production.
+  // tunnelRoute: "/monitoring",
   sourcemaps: { disable: false, deleteSourcemapsAfterUpload: true },
   webpack: { automaticVercelMonitors: false },
 });
