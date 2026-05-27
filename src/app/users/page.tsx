@@ -122,8 +122,15 @@ export default function UsersPage() {
   }
 
   const filteredUsers = users.filter(user => {
-    const matchesSearch = user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         user.email.toLowerCase().includes(searchTerm.toLowerCase())
+    // Null-safe across name + email — some users have null names (Google-only
+    // OAuth without a name claim, partial profiles). The previous code called
+    // `.toLowerCase()` directly on those, which throws and breaks the filter
+    // for the whole list, making search by email appear to "do nothing".
+    const q = searchTerm.trim().toLowerCase()
+    const matchesSearch =
+      q === "" ||
+      (user.name || "").toLowerCase().includes(q) ||
+      (user.email || "").toLowerCase().includes(q)
     const matchesRole = roleFilter === "all" || user.role === roleFilter
     return matchesSearch && matchesRole
   })

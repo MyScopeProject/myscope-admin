@@ -19,6 +19,7 @@ import {
   Landmark,
   IdCard,
   Loader,
+  Search,
   ShieldOff,
   User,
 } from "lucide-react"
@@ -74,6 +75,10 @@ export default function OrganizersPage() {
   const { user } = useAuth()
   const [tab, setTab] = useState<Status>("pending")
   const [profiles, setProfiles] = useState<OrganizerProfile[]>([])
+  // Client-side search across the brand fields admins actually use to spot
+  // an application: business name, NIC/BR, business type, and the underlying
+  // user's name + email (handy when an organizer reaches out by personal mail).
+  const [searchTerm, setSearchTerm] = useState("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [pendingActionId, setPendingActionId] = useState<string | null>(null)
@@ -170,7 +175,23 @@ export default function OrganizersPage() {
     }
   }
 
-  const counts = useMemo(() => ({ shown: profiles.length }), [profiles])
+  // Filter once, drive both the rendered grid and the "X shown" counter
+  // from the same memoized list so they never disagree.
+  const filteredProfiles = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase()
+    if (!q) return profiles
+    return profiles.filter((p) => {
+      const haystack = [
+        p.business_name,
+        p.nic_or_br,
+        p.business_type,
+        p.users?.name,
+        p.users?.email,
+      ]
+      return haystack.some((s) => (s || "").toLowerCase().includes(q))
+    })
+  }, [profiles, searchTerm])
+  const counts = useMemo(() => ({ shown: filteredProfiles.length }), [filteredProfiles])
 
   return (
     <ProtectedRoute requiredRoles={["superadmin", "content-manager", "event-manager"]}>
@@ -207,24 +228,44 @@ export default function OrganizersPage() {
             </div>
           </div>
 
+          {/* Search — narrows the current tab. Matches business name, NIC/BR,
+              business type, and the underlying user's name + email. */}
+          <div className="relative max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <input
+              type="search"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search by business name, NIC, email…"
+              className="h-9 w-full rounded-md border border-input bg-card pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1"
+              disabled={loading || !!error}
+            />
+          </div>
+
           {/* Content */}
           {loading ? (
             <PageLoader />
           ) : error ? (
             <ErrorMessage type="error" title="Error loading organizers" message={error} />
-          ) : profiles.length === 0 ? (
+          ) : filteredProfiles.length === 0 ? (
             <EmptyState
               icon={Building2}
-              title={`No ${tab} applications`}
+              title={
+                searchTerm.trim()
+                  ? "No matches"
+                  : `No ${tab} applications`
+              }
               description={
-                tab === "pending"
-                  ? "Nothing waiting for review right now."
-                  : `No applications have been ${tab} yet.`
+                searchTerm.trim()
+                  ? `No ${tab} applications match "${searchTerm.trim()}".`
+                  : tab === "pending"
+                    ? "Nothing waiting for review right now."
+                    : `No applications have been ${tab} yet.`
               }
             />
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {profiles.map((p) => (
+              {filteredProfiles.map((p) => (
                 <ProfileCard
                   key={p.id}
                   profile={p}

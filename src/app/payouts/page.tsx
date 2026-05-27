@@ -27,7 +27,24 @@ interface Payout {
   event_id: string | null
   event?: { id: string; title: string } | null
   organizer_id: string
+  // The underlying user row (kept for fallback / email lookup if no profile).
   organizer?: { id: string; name: string; email: string } | null
+  // The organizer BRAND profile — what admins actually want to see when
+  // reviewing payouts (business name + bank details). Nullable for legacy
+  // payouts whose organizer hasn't completed registration.
+  organizer_profile?: {
+    user_id: string
+    business_name: string | null
+    business_type: string | null
+    profile_image_url: string | null
+    phone: string | null
+    bank_name: string | null
+    bank_account_number: string | null
+    bank_account_name: string | null
+    branch_name: string | null
+    bank_code: string | null
+    branch_code: string | null
+  } | null
   requested_at: string
   processed_at: string | null
   slip_url?: string | null
@@ -313,8 +330,21 @@ export default function PayoutsPage() {
                       >
                         <td className="px-4 py-3 text-muted-foreground">{new Date(p.requested_at).toLocaleDateString()}</td>
                         <td className="px-4 py-3">
-                          <div className="font-medium">{p.organizer?.name ?? p.organizer_id.slice(0, 8)}</div>
-                          <div className="text-xs text-muted-foreground">{p.organizer?.email}</div>
+                          {/* Show organizer BRAND (business_name), with the
+                              user name + email as a smaller fallback context
+                              line. Admins reviewing payouts know the brand,
+                              not the personal account behind it. */}
+                          <div className="font-medium">
+                            {p.organizer_profile?.business_name
+                              ?? p.organizer?.name
+                              ?? p.organizer_id.slice(0, 8)}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {p.organizer?.email}
+                            {p.organizer_profile?.business_type && (
+                              <> · {p.organizer_profile.business_type}</>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3">{p.event?.title ?? "All events"}</td>
                         <td className="px-4 py-3">
@@ -484,12 +514,56 @@ export default function PayoutsPage() {
                 </div>
 
                 <div className="mt-5 divide-y divide-border rounded-xl border border-border">
-                  <DetailRow label="Organizer" value={selected.organizer?.name || selected.organizer_id} />
-                  <DetailRow label="Email" value={selected.organizer?.email || "—"} />
+                  {/* Organizer block — lead with brand name; user account is
+                      surfaced as supporting context (admins still need the
+                      email to reach out about a payout). */}
+                  <DetailRow
+                    label="Organizer"
+                    value={
+                      selected.organizer_profile?.business_name
+                        || selected.organizer?.name
+                        || selected.organizer_id
+                    }
+                  />
+                  {selected.organizer_profile?.business_type && (
+                    <DetailRow label="Type" value={selected.organizer_profile.business_type} />
+                  )}
+                  <DetailRow label="Contact email" value={selected.organizer?.email || "—"} />
+                  {selected.organizer_profile?.phone && (
+                    <DetailRow label="Phone" value={selected.organizer_profile.phone} />
+                  )}
                   <DetailRow label="Event" value={selected.event?.title || "All events"} />
                   <DetailRow label="Requested" value={new Date(selected.requested_at).toLocaleString()} />
                   <DetailRow label="Processed" value={selected.processed_at ? new Date(selected.processed_at).toLocaleString() : "—"} />
                   <DetailRow label="Notes" value={selected.notes || "—"} />
+                </div>
+
+                {/* Bank details — pulled from organizer_profiles. Always render
+                    the section so admins notice if it's missing (an empty
+                    section reads "Not provided" rather than disappearing). */}
+                <div className="mt-5">
+                  <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                    <Banknote className="h-3.5 w-3.5" />
+                    Bank details
+                  </div>
+                  {selected.organizer_profile?.bank_account_number ? (
+                    <div className="divide-y divide-border rounded-xl border border-border">
+                      <DetailRow label="Bank" value={selected.organizer_profile.bank_name || "—"} />
+                      <DetailRow label="Branch" value={selected.organizer_profile.branch_name || "—"} />
+                      <DetailRow label="Account holder" value={selected.organizer_profile.bank_account_name || "—"} />
+                      <DetailRow label="Account number" value={selected.organizer_profile.bank_account_number} />
+                      {selected.organizer_profile.bank_code && (
+                        <DetailRow label="Bank code" value={selected.organizer_profile.bank_code} />
+                      )}
+                      {selected.organizer_profile.branch_code && (
+                        <DetailRow label="Branch code" value={selected.organizer_profile.branch_code} />
+                      )}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
+                      Organizer hasn't added bank details yet.
+                    </div>
+                  )}
                 </div>
 
                 {selected.slip_url && (
