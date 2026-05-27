@@ -12,7 +12,12 @@
  */
 import * as Sentry from '@sentry/nextjs';
 
-const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
+// Hardcoded fallback DSN. Sentry DSNs are public-safe (they ship to every
+// browser bundle anyway). The env-var pattern silently skipped init when the
+// var was missing or mis-scoped on Vercel; the hardcoded value guarantees the
+// SDK always has somewhere to send.
+const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN
+  || 'https://d6d224b7ac8df876f16e1c4fc4d7c62f@o4511461186732032.ingest.us.sentry.io/4511461394874368';
 
 if (dsn) {
   Sentry.init({
