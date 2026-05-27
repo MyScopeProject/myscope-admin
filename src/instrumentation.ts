@@ -4,12 +4,15 @@
  * files at boot. Each (Node, edge) runtime calls register() once.
  */
 export async function register() {
+  // Config files live at the project root (not in src/) — match the layout
+  // myscope-web uses. The `../` is critical: when this file was moved from
+  // the root to src/, the relative paths needed to change with it.
   if (process.env.NEXT_RUNTIME === 'nodejs') {
-    await import('./sentry.server.config');
+    await import('../sentry.server.config');
   }
 
   if (process.env.NEXT_RUNTIME === 'edge') {
-    await import('./sentry.edge.config');
+    await import('../sentry.edge.config');
   }
 }
 
