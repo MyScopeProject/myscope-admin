@@ -58,6 +58,7 @@ interface Settings {
     requireEmailVerification: boolean
     enableNotifications: boolean
     maintenanceMode: boolean
+    maintenanceMessage: string
     sms: SmsSettings
   }
   roles: {
@@ -175,6 +176,7 @@ export default function SettingsPage() {
     requireEmailVerification: false,
     enableNotifications: true,
     maintenanceMode: false,
+    maintenanceMessage: "",
     sms: { ...DEFAULT_SMS },
   })
 
@@ -1043,34 +1045,60 @@ function FeaturesSection({
         variant="danger"
       >
         <div
-          className={`flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between ${
+          className={`flex flex-col gap-4 rounded-xl border p-4 ${
             features.maintenanceMode
               ? "border-amber-500/40 bg-amber-500/10"
               : "border-border bg-muted/30"
           }`}
         >
-          <div className="flex items-start gap-3">
-            <span
-              className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
-                features.maintenanceMode
-                  ? "bg-amber-500/20 text-amber-700 dark:text-amber-400"
-                  : "bg-muted text-muted-foreground"
-              }`}
-            >
-              <Wrench className="h-5 w-5" />
-            </span>
-            <div>
-              <p className="font-semibold text-foreground">Maintenance mode</p>
-              <p className="text-sm text-muted-foreground">
-                Replaces the public site with a maintenance page. The admin panel keeps working.
-              </p>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <span
+                className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
+                  features.maintenanceMode
+                    ? "bg-amber-500/20 text-amber-700 dark:text-amber-400"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                <Wrench className="h-5 w-5" />
+              </span>
+              <div>
+                <p className="font-semibold text-foreground">Maintenance mode</p>
+                <p className="text-sm text-muted-foreground">
+                  Shows a top-of-page banner on the public site warning visitors of degraded service. The admin panel keeps working.
+                </p>
+              </div>
             </div>
+            <Switch
+              checked={features.maintenanceMode}
+              onChange={(v) => set("maintenanceMode", v)}
+              label="Maintenance mode"
+            />
           </div>
-          <Switch
-            checked={features.maintenanceMode}
-            onChange={(v) => set("maintenanceMode", v)}
-            label="Maintenance mode"
-          />
+
+          {features.maintenanceMode && (
+            <div className="space-y-1.5">
+              <label
+                htmlFor="maintenance-message"
+                className="text-sm font-medium text-foreground"
+              >
+                Banner message
+              </label>
+              <textarea
+                id="maintenance-message"
+                value={features.maintenanceMessage}
+                onChange={(e) => set("maintenanceMessage", e.target.value.slice(0, 280))}
+                rows={2}
+                maxLength={280}
+                placeholder="We're making some quick updates. Bookings may be intermittent — sorry for the bother."
+                className="w-full resize-none rounded-lg border border-amber-500/40 bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+              />
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>Leave blank to use the default message.</span>
+                <span>{features.maintenanceMessage.length}/280</span>
+              </div>
+            </div>
+          )}
         </div>
       </SectionCard>
     </div>
@@ -1088,6 +1116,7 @@ function featuresFromSettings(s: Settings): Settings["features"] {
     requireEmailVerification: s.features?.requireEmailVerification ?? false,
     enableNotifications: s.features?.enableNotifications ?? true,
     maintenanceMode: s.features?.maintenanceMode ?? false,
+    maintenanceMessage: s.features?.maintenanceMessage ?? "",
     sms: smsFromSettings(s.features?.sms),
   }
 }
