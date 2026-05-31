@@ -318,6 +318,40 @@ export const layoutRequestsAPI = {
 // seat count) so admins can build the seat map for custom requests and then
 // approve the event for live. Building reuses the organizer seat-grid /
 // venue-layouts apply endpoints (superadmin passes their role gates).
+// Payload for POST /api/organizer/events/:id/seat-map — the visual / canvas
+// seat-map endpoint. Each seat carries absolute (x, y) on the layout's
+// viewport; decor renders behind the seats (stage, walls, labels).
+export interface VisualSeatMapSeat {
+  section: string
+  row_label: string
+  seat_number: string | number
+  seat_label?: string
+  x: number
+  y: number
+  rotation?: number
+  ticket_type_id: string
+  seat_type?: 'standard' | 'accessible' | 'restricted_view' | 'aisle'
+}
+export interface VisualSeatMapDecor {
+  id?: string
+  kind: 'rect' | 'text' | 'line'
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+  rotation?: number
+  label?: string
+  fill?: string
+  color?: string
+}
+export interface VisualSeatMapPayload {
+  viewbox_width: number
+  viewbox_height: number
+  background_image_url?: string | null
+  decor: VisualSeatMapDecor[]
+  seats: VisualSeatMapSeat[]
+}
+
 export interface ReservedLayoutDoc {
   url: string
   name: string
@@ -361,6 +395,12 @@ export const reservedEventsAPI = {
     templateId: string,
     body: { event_id: string; section_ticket_map: Record<string, string> },
   ) => api.post(`/venue-layouts/${templateId}/apply-to-event`, body),
+  // Save a visual / canvas seat map (per-seat x/y, decor, viewport). The
+  // MyTickets-quality path — replaces the entire seat list for the event.
+  buildSeatMap: (
+    eventId: string,
+    body: VisualSeatMapPayload,
+  ) => api.post(`/organizer/events/${eventId}/seat-map`, body),
   approve: (eventId: string) => api.post(`/admin/events/${eventId}/approve`),
   reject: (eventId: string, reason: string) =>
     api.post(`/admin/events/${eventId}/reject`, { reason }),

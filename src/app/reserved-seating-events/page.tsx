@@ -313,14 +313,23 @@ function ReservedEventCard({
 
       {/* Actions */}
       <div className="flex shrink-0 flex-col items-stretch gap-2 lg:w-48">
+        <a
+          href={`/reserved-seating-events/${event.id}/builder`}
+          className="inline-flex items-center justify-center gap-1.5 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+          title="Open the canvas editor — drag seats to fit any venue shape"
+        >
+          <LayoutGrid className="h-4 w-4" />
+          Visual builder
+        </a>
         <button
           type="button"
           onClick={onBuild}
           disabled={busy}
           className="inline-flex items-center justify-center gap-1.5 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          title="Quick grid builder — fastest path for rectangular sections"
         >
           <Armchair className="h-4 w-4" />
-          {hasSeats ? "Rebuild seat map" : "Build seat map"}
+          {hasSeats ? "Rebuild grid" : "Quick grid"}
         </button>
 
         {event.approval_status === "pending" && (

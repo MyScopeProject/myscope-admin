@@ -1,0 +1,882 @@
+"use client"
+
+/**
+ * Visual canvas seat-map editor — P2 of the MyTickets-quality reserved-seating
+ * rework. Per-seat (x, y) positioning on a Konva canvas, decor shapes for stage
+ * / walls / labels, section + ticket-type assignment, saves via the new
+ * POST /api/organizer/events/:id/seat-map endpoint.
+ *
+ * MVP scope (this iteration):
+ *   - Single canvas with pan + zoom (Konva Stage drag + wheel scaling)
+ *   - "Add section" tool: name + rows + cols + spacing + ticket type → drops a
+ *     grid of seats at top-left, admin drags individual seats to fit
+ *   - "Add decor" tools: stage rectangle (rect+label), text label
+ *   - Click selects (seat or decor); Delete / Backspace removes selected
+ *   - Color-by-tier in the editor (matches the user-facing renderer's palette)
+ *   - Save button validates + POSTs the payload
+ *
+ * Not yet (worth adding later):
+ *   - Multi-select drag (move a whole section as a group)
+ *   - Background floor-plan image upload
+ *   - Undo/redo
+ *   - Rotation
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useParams, useRouter } from "next/navigation"
+import dynamic from "next/dynamic"
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute"
+import { AdminLayout } from "@/components/layout/AdminLayout"
+import { PageLoader } from "@/components/ui/loading"
+import {
+  reservedEventsAPI,
+  type ReservedEvent,
+  type ReservedEventTicketType,
+  type VisualSeatMapDecor,
+  type VisualSeatMapPayload,
+  type VisualSeatMapSeat,
+} from "@/lib/apiEndpoints"
+import toast from "react-hot-toast"
+import type Konva from "konva"
+import {
+  ArrowLeft,
+  ChevronDown,
+  LayoutGrid,
+  Plus,
+  Save,
+  Square,
+  Trash2,
+  Type as TypeIcon,
+  X,
+} from "lucide-react"
+
+// react-konva uses the browser's window. Disable SSR so Next doesn't try to
+// render the Stage/Layer on the server.
+const Stage = dynamic(() => import("react-konva").then(m => m.Stage), { ssr: false })
+const Layer = dynamic(() => import("react-konva").then(m => m.Layer), { ssr: false })
+const Rect  = dynamic(() => import("react-konva").then(m => m.Rect),  { ssr: false })
+const KText = dynamic(() => import("react-konva").then(m => m.Text),  { ssr: false })
+const Circle = dynamic(() => import("react-konva").then(m => m.Circle), { ssr: false })
+const Group = dynamic(() => import("react-konva").then(m => m.Group), { ssr: false })
+
+// Palette for ticket-type swatches. Indexed by tier position; auditoriums
+// rarely have >6 tiers so this comfortably covers them. Matches BUILDER_COLORS
+// from the existing grid builder for visual continuity.
+const TIER_PALETTE = ["#7F77DD", "#1D9E75", "#BA7517", "#D85A30", "#185FA5", "#993556", "#6B7280"]
+
+const DEFAULT_VIEWBOX = { width: 1600, height: 1200 }
+const SEAT_RADIUS = 8
+const DEFAULT_SEAT_SPACING = 22 // px between seats in generated rows
+
+// Spreadsheet-style row labels (A, B, …, Z, AA, AB, …)
+function rowLabelFromIndex(n: number): string {
+  let s = ""
+  let i = n + 1
+  while (i > 0) {
+    const r = (i - 1) % 26
+    s = String.fromCharCode(65 + r) + s
+    i = Math.floor((i - 1) / 26)
+  }
+  return s
+}
+
+// ----- Editor state types ------------------------------------------------
+
+interface EditorSeat {
+  id: string                    // local UUID
+  section: string
+  row_label: string
+  seat_number: string
+  x: number
+  y: number
+  ticket_type_id: string
+}
+
+interface EditorDecor {
+  id: string
+  kind: "rect" | "text"
+  x: number
+  y: number
+  width?: number
+  height?: number
+  label?: string
+  fill?: string
+  color?: string
+}
+
+type Selection =
+  | { kind: "seat";  id: string }
+  | { kind: "decor"; id: string }
+  | null
+
+// ----- Helpers -----------------------------------------------------------
+
+let _uidCounter = 0
+const uid = (prefix = "id") => `${prefix}_${Date.now().toString(36)}_${(++_uidCounter).toString(36)}`
+
+function tierColor(tierIndex: number) {
+  return TIER_PALETTE[tierIndex % TIER_PALETTE.length]
+}
+
+// ----- Component ---------------------------------------------------------
+
+export default function VisualSeatMapBuilderPage() {
+  return (
+    <ProtectedRoute requiredRoles={["superadmin"]}>
+      <AdminLayout>
+        <BuilderInner />
+      </AdminLayout>
+    </ProtectedRoute>
+  )
+}
+
+function BuilderInner() {
+  const params = useParams<{ id: string }>()
+  const router = useRouter()
+  const eventId = params?.id
+
+  const [event, setEvent] = useState<ReservedEvent | null>(null)
+  const [ticketTypes, setTicketTypes] = useState<ReservedEventTicketType[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  // Canvas state
+  const [seats, setSeats] = useState<EditorSeat[]>([])
+  const [decor, setDecor] = useState<EditorDecor[]>([])
+  const [selection, setSelection] = useState<Selection>(null)
+
+  // Modals
+  const [showAddSection, setShowAddSection] = useState(false)
+
+  // Stage transform — pan + zoom
+  const stageRef = useRef<Konva.Stage | null>(null)
+  const [stagePos, setStagePos] = useState({ x: 0, y: 0 })
+  const [stageScale, setStageScale] = useState(1)
+  const [stageSize, setStageSize] = useState({ width: 1200, height: 700 })
+
+  const containerRef = useRef<HTMLDivElement | null>(null)
+
+  // ----- Load event + ticket types ----------------------------------------
+
+  useEffect(() => {
+    if (!eventId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const [evRes, ttRes] = await Promise.all([
+          reservedEventsAPI.list(),                       // event lives in this list
+          reservedEventsAPI.ticketTypes(eventId),
+        ])
+        if (cancelled) return
+        const events = (evRes.data?.data?.events || []) as ReservedEvent[]
+        const ev = events.find((e: ReservedEvent) => e.id === eventId) ?? null
+        setEvent(ev)
+        setTicketTypes(ttRes.data?.data?.ticket_types || [])
+      } catch {
+        toast.error("Failed to load event")
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [eventId])
+
+  // Resize stage to fit container.
+  useEffect(() => {
+    const update = () => {
+      const el = containerRef.current
+      if (!el) return
+      setStageSize({ width: el.clientWidth, height: el.clientHeight })
+    }
+    update()
+    window.addEventListener("resize", update)
+    return () => window.removeEventListener("resize", update)
+  }, [])
+
+  // Keyboard: Delete removes the selected item.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return
+      if (!selection) return
+      e.preventDefault()
+      if (selection.kind === "seat")  setSeats(s => s.filter(x => x.id !== selection.id))
+      if (selection.kind === "decor") setDecor(d => d.filter(x => x.id !== selection.id))
+      setSelection(null)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [selection])
+
+  // ----- Tools ------------------------------------------------------------
+
+  const addSection = useCallback((opts: {
+    name: string
+    rows: number
+    cols: number
+    spacing: number
+    ticket_type_id: string
+    startRow?: number
+  }) => {
+    const { name, rows, cols, spacing, ticket_type_id, startRow = 0 } = opts
+    // Drop at center of current viewport (in stage coords).
+    const center = stageToCanvas({
+      x: stageSize.width / 2,
+      y: stageSize.height / 2,
+    }, stagePos, stageScale)
+    const blockWidth  = (cols - 1) * spacing
+    const blockHeight = (rows - 1) * spacing
+    const originX = Math.round(center.x - blockWidth  / 2)
+    const originY = Math.round(center.y - blockHeight / 2)
+
+    const next: EditorSeat[] = []
+    for (let r = 0; r < rows; r++) {
+      const rowLabel = rowLabelFromIndex(startRow + r)
+      for (let c = 0; c < cols; c++) {
+        next.push({
+          id: uid("seat"),
+          section: name,
+          row_label: rowLabel,
+          seat_number: String(c + 1),
+          x: originX + c * spacing,
+          y: originY + r * spacing,
+          ticket_type_id,
+        })
+      }
+    }
+    setSeats(prev => [...prev, ...next])
+    toast.success(`Added section "${name}" (${next.length} seats)`)
+  }, [stagePos, stageScale, stageSize])
+
+  const addDecor = useCallback((kind: "rect" | "text", label = "") => {
+    const center = stageToCanvas({
+      x: stageSize.width / 2,
+      y: stageSize.height / 2,
+    }, stagePos, stageScale)
+    const id = uid("decor")
+    if (kind === "rect") {
+      setDecor(prev => [...prev, {
+        id, kind: "rect",
+        x: Math.round(center.x - 200), y: Math.round(center.y - 30),
+        width: 400, height: 60,
+        label: label || "STAGE",
+        fill: "#111827", color: "#FFFFFF",
+      }])
+    } else {
+      setDecor(prev => [...prev, {
+        id, kind: "text",
+        x: Math.round(center.x), y: Math.round(center.y),
+        label: label || "LABEL",
+        color: "#374151",
+      }])
+    }
+    setSelection({ kind: "decor", id })
+  }, [stagePos, stageScale, stageSize])
+
+  // ----- Wheel zoom (handler on Stage) -----------------------------------
+
+  const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
+    e.evt.preventDefault()
+    const scaleBy = 1.08
+    const stage = e.target.getStage()
+    if (!stage) return
+    const oldScale = stage.scaleX()
+    const pointer = stage.getPointerPosition()
+    if (!pointer) return
+    const mousePointTo = {
+      x: (pointer.x - stage.x()) / oldScale,
+      y: (pointer.y - stage.y()) / oldScale,
+    }
+    const direction = e.evt.deltaY > 0 ? -1 : 1
+    const newScale = Math.max(0.2, Math.min(4, direction > 0 ? oldScale * scaleBy : oldScale / scaleBy))
+    setStageScale(newScale)
+    setStagePos({
+      x: pointer.x - mousePointTo.x * newScale,
+      y: pointer.y - mousePointTo.y * newScale,
+    })
+  }, [])
+
+  // ----- Save -------------------------------------------------------------
+
+  const save = useCallback(async () => {
+    if (!eventId || !event) return
+    if (seats.length === 0) {
+      toast.error("Add at least one section before saving.")
+      return
+    }
+    // Validate: every seat has a ticket_type
+    const orphans = seats.filter(s => !s.ticket_type_id)
+    if (orphans.length > 0) {
+      toast.error(`${orphans.length} seat(s) have no ticket type assigned.`)
+      return
+    }
+    setSaving(true)
+    try {
+      const payload: VisualSeatMapPayload = {
+        viewbox_width:  DEFAULT_VIEWBOX.width,
+        viewbox_height: DEFAULT_VIEWBOX.height,
+        background_image_url: null,
+        decor: decor.map<VisualSeatMapDecor>(d => ({
+          id: d.id,
+          kind: d.kind,
+          x: d.x,
+          y: d.y,
+          width: d.width,
+          height: d.height,
+          label: d.label,
+          fill: d.fill,
+          color: d.color,
+        })),
+        seats: seats.map<VisualSeatMapSeat>(s => ({
+          section: s.section,
+          row_label: s.row_label,
+          seat_number: s.seat_number,
+          seat_label: `${s.row_label}-${s.seat_number}`,
+          x: s.x,
+          y: s.y,
+          ticket_type_id: s.ticket_type_id,
+          seat_type: "standard",
+        })),
+      }
+      const res = await reservedEventsAPI.buildSeatMap(eventId, payload)
+      const out = res?.data?.data
+      toast.success(`Saved (${out?.seats_created ?? seats.length} seats)`)
+      router.push("/reserved-seating-events")
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || "Save failed"
+      toast.error(msg)
+    } finally {
+      setSaving(false)
+    }
+  }, [eventId, event, seats, decor, router])
+
+  // ----- Render -----------------------------------------------------------
+
+  if (loading) return <PageLoader />
+  if (!event)  return <div className="p-8 text-center text-muted-foreground">Event not found.</div>
+
+  const tierIndexById = (id: string) => ticketTypes.findIndex(t => t.id === id)
+
+  return (
+    <div className="flex flex-col h-[calc(100vh-80px)]">
+      {/* Top bar */}
+      <div className="border-b bg-background flex items-center gap-3 px-4 py-2.5">
+        <button
+          onClick={() => router.push("/reserved-seating-events")}
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="h-4 w-4" /> Back
+        </button>
+        <div className="h-5 w-px bg-border" />
+        <div className="flex-1 min-w-0">
+          <div className="font-semibold truncate">{event.title}</div>
+          <div className="text-xs text-muted-foreground truncate">
+            {event.venue_name ?? "Venue TBA"} · {seats.length} seat{seats.length === 1 ? "" : "s"} · {decor.length} decor item{decor.length === 1 ? "" : "s"}
+          </div>
+        </div>
+        <button
+          onClick={save}
+          disabled={saving || seats.length === 0}
+          className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+        >
+          <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save seat map"}
+        </button>
+      </div>
+
+      {/* Body — toolbar | canvas | inspector */}
+      <div className="flex-1 flex min-h-0">
+        {/* Toolbar */}
+        <aside className="w-56 border-r bg-muted/30 flex flex-col gap-1 p-2 text-sm">
+          <button
+            onClick={() => setShowAddSection(true)}
+            className="inline-flex items-center gap-2 rounded px-3 py-2 hover:bg-accent text-left"
+          >
+            <LayoutGrid className="h-4 w-4" /> Add section
+          </button>
+          <button
+            onClick={() => addDecor("rect", "STAGE")}
+            className="inline-flex items-center gap-2 rounded px-3 py-2 hover:bg-accent text-left"
+          >
+            <Square className="h-4 w-4" /> Add stage / decor rect
+          </button>
+          <button
+            onClick={() => addDecor("text", "Label")}
+            className="inline-flex items-center gap-2 rounded px-3 py-2 hover:bg-accent text-left"
+          >
+            <TypeIcon className="h-4 w-4" /> Add text label
+          </button>
+
+          <div className="mt-4 px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Ticket tiers
+          </div>
+          <div className="px-2 flex flex-col gap-1">
+            {ticketTypes.length === 0 ? (
+              <div className="px-1 text-xs text-muted-foreground">
+                No ticket types yet — add them on the event before building the seat map.
+              </div>
+            ) : ticketTypes.map((tt, i) => (
+              <div key={tt.id} className="flex items-center gap-2 text-xs px-1 py-1">
+                <span className="inline-block w-3 h-3 rounded-full" style={{ background: tierColor(i) }} />
+                <span className="flex-1 truncate">{tt.name}</span>
+                <span className="text-muted-foreground">{Number(tt.price).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-auto px-3 py-2 text-[11px] text-muted-foreground border-t border-border/50">
+            Scroll: zoom · Drag empty: pan · Click seat: select · Delete: remove
+          </div>
+        </aside>
+
+        {/* Canvas */}
+        <div
+          ref={containerRef}
+          className="flex-1 relative bg-[radial-gradient(circle_at_1px_1px,_rgba(0,0,0,0.06)_1px,_transparent_0)]"
+          style={{ backgroundSize: "20px 20px" }}
+        >
+          <Stage
+            ref={stageRef as any}
+            width={stageSize.width}
+            height={stageSize.height}
+            scaleX={stageScale}
+            scaleY={stageScale}
+            x={stagePos.x}
+            y={stagePos.y}
+            draggable
+            onWheel={handleWheel as any}
+            onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
+              // Track stage pan position
+              const stage = e.target.getStage()
+              if (stage && e.target === stage) {
+                setStagePos({ x: stage.x(), y: stage.y() })
+              }
+            }}
+            onClick={(e: Konva.KonvaEventObject<MouseEvent>) => {
+              // Click on empty stage deselects
+              if (e.target === e.target.getStage()) setSelection(null)
+            }}
+          >
+            <Layer>
+              {/* Viewport rectangle so admin sees the canvas bounds */}
+              <Rect
+                x={0} y={0}
+                width={DEFAULT_VIEWBOX.width} height={DEFAULT_VIEWBOX.height}
+                fill="#FFFFFF" stroke="#E5E7EB" strokeWidth={1}
+              />
+
+              {/* Decor */}
+              {decor.map(d => {
+                const isSel = selection?.kind === "decor" && selection.id === d.id
+                if (d.kind === "rect") {
+                  return (
+                    <Group
+                      key={d.id}
+                      x={d.x} y={d.y}
+                      draggable
+                      onClick={() => setSelection({ kind: "decor", id: d.id })}
+                      onTap={() => setSelection({ kind: "decor", id: d.id })}
+                      onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
+                        const t = e.target
+                        setDecor(arr => arr.map(x => x.id === d.id ? { ...x, x: Math.round(t.x()), y: Math.round(t.y()) } : x))
+                      }}
+                    >
+                      <Rect
+                        width={d.width ?? 200} height={d.height ?? 60}
+                        fill={d.fill ?? "#111827"}
+                        stroke={isSel ? "#3B82F6" : "transparent"}
+                        strokeWidth={isSel ? 2 : 0}
+                      />
+                      {d.label ? (
+                        <KText
+                          width={d.width ?? 200} height={d.height ?? 60}
+                          text={d.label}
+                          fill={d.color ?? "#FFFFFF"}
+                          align="center" verticalAlign="middle"
+                          fontSize={18} fontStyle="bold"
+                        />
+                      ) : null}
+                    </Group>
+                  )
+                }
+                return (
+                  <KText
+                    key={d.id}
+                    x={d.x} y={d.y}
+                    text={d.label ?? "LABEL"}
+                    fill={d.color ?? "#374151"}
+                    fontSize={16} fontStyle="bold"
+                    draggable
+                    onClick={() => setSelection({ kind: "decor", id: d.id })}
+                    onTap={() => setSelection({ kind: "decor", id: d.id })}
+                    stroke={isSel ? "#3B82F6" : undefined}
+                    strokeWidth={isSel ? 1 : 0}
+                    onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
+                      const t = e.target
+                      setDecor(arr => arr.map(x => x.id === d.id ? { ...x, x: Math.round(t.x()), y: Math.round(t.y()) } : x))
+                    }}
+                  />
+                )
+              })}
+
+              {/* Seats */}
+              {seats.map(s => {
+                const isSel = selection?.kind === "seat" && selection.id === s.id
+                const color = tierColor(tierIndexById(s.ticket_type_id))
+                return (
+                  <Circle
+                    key={s.id}
+                    x={s.x} y={s.y} radius={SEAT_RADIUS}
+                    fill={color}
+                    stroke={isSel ? "#0F172A" : "#FFFFFF"}
+                    strokeWidth={isSel ? 2 : 1}
+                    draggable
+                    onClick={() => setSelection({ kind: "seat", id: s.id })}
+                    onTap={() => setSelection({ kind: "seat", id: s.id })}
+                    onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
+                      const t = e.target
+                      setSeats(arr => arr.map(x => x.id === s.id ? { ...x, x: Math.round(t.x()), y: Math.round(t.y()) } : x))
+                    }}
+                  />
+                )
+              })}
+            </Layer>
+          </Stage>
+
+          {/* Stage transform reset button */}
+          <button
+            onClick={() => { setStagePos({ x: 0, y: 0 }); setStageScale(1) }}
+            className="absolute bottom-3 left-3 rounded-md bg-background border px-2.5 py-1 text-xs shadow-sm hover:bg-accent"
+          >
+            Reset view
+          </button>
+        </div>
+
+        {/* Inspector */}
+        <aside className="w-72 border-l bg-muted/30 flex flex-col">
+          {selection ? (
+            selection.kind === "seat" ? (
+              <SeatInspector
+                seat={seats.find(s => s.id === selection.id)!}
+                ticketTypes={ticketTypes}
+                onChange={patch => setSeats(arr => arr.map(s => s.id === selection.id ? { ...s, ...patch } : s))}
+                onDelete={() => { setSeats(arr => arr.filter(s => s.id !== selection.id)); setSelection(null) }}
+              />
+            ) : (
+              <DecorInspector
+                decor={decor.find(d => d.id === selection.id)!}
+                onChange={patch => setDecor(arr => arr.map(d => d.id === selection.id ? { ...d, ...patch } : d))}
+                onDelete={() => { setDecor(arr => arr.filter(d => d.id !== selection.id)); setSelection(null) }}
+              />
+            )
+          ) : (
+            <div className="p-4 text-sm text-muted-foreground">
+              Click a seat or decor item to edit it.
+            </div>
+          )}
+
+          {/* Section summary */}
+          <div className="mt-auto border-t p-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+              Sections in this map
+            </div>
+            <SectionSummary seats={seats} ticketTypes={ticketTypes} />
+          </div>
+        </aside>
+      </div>
+
+      {showAddSection && (
+        <AddSectionModal
+          ticketTypes={ticketTypes}
+          existingSections={[...new Set(seats.map(s => s.section))]}
+          onCancel={() => setShowAddSection(false)}
+          onSubmit={opts => { setShowAddSection(false); addSection(opts) }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Inspector panels
+// ---------------------------------------------------------------------------
+
+function SeatInspector({
+  seat, ticketTypes, onChange, onDelete,
+}: {
+  seat: EditorSeat
+  ticketTypes: ReservedEventTicketType[]
+  onChange: (patch: Partial<EditorSeat>) => void
+  onDelete: () => void
+}) {
+  return (
+    <div className="p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Seat</h3>
+        <button onClick={onDelete} className="text-destructive hover:bg-destructive/10 rounded p-1.5">
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
+      <Field label="Section">
+        <input
+          value={seat.section}
+          onChange={e => onChange({ section: e.target.value })}
+          className="w-full px-2 py-1 text-sm border rounded bg-background"
+        />
+      </Field>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Row">
+          <input
+            value={seat.row_label}
+            onChange={e => onChange({ row_label: e.target.value.toUpperCase() })}
+            className="w-full px-2 py-1 text-sm border rounded bg-background"
+          />
+        </Field>
+        <Field label="Number">
+          <input
+            value={seat.seat_number}
+            onChange={e => onChange({ seat_number: e.target.value })}
+            className="w-full px-2 py-1 text-sm border rounded bg-background"
+          />
+        </Field>
+      </div>
+      <Field label="Ticket type">
+        <select
+          value={seat.ticket_type_id}
+          onChange={e => onChange({ ticket_type_id: e.target.value })}
+          className="w-full px-2 py-1 text-sm border rounded bg-background"
+        >
+          {ticketTypes.map(tt => (
+            <option key={tt.id} value={tt.id}>
+              {tt.name} — {Number(tt.price).toLocaleString()}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="X"><span className="text-xs px-2 py-1 bg-background rounded inline-block">{seat.x}</span></Field>
+        <Field label="Y"><span className="text-xs px-2 py-1 bg-background rounded inline-block">{seat.y}</span></Field>
+      </div>
+    </div>
+  )
+}
+
+function DecorInspector({
+  decor, onChange, onDelete,
+}: {
+  decor: EditorDecor
+  onChange: (patch: Partial<EditorDecor>) => void
+  onDelete: () => void
+}) {
+  return (
+    <div className="p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">{decor.kind === "rect" ? "Stage / Rect" : "Text label"}</h3>
+        <button onClick={onDelete} className="text-destructive hover:bg-destructive/10 rounded p-1.5">
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
+      <Field label="Label">
+        <input
+          value={decor.label ?? ""}
+          onChange={e => onChange({ label: e.target.value })}
+          className="w-full px-2 py-1 text-sm border rounded bg-background"
+        />
+      </Field>
+      {decor.kind === "rect" && (
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Width">
+            <input
+              type="number"
+              value={decor.width ?? 200}
+              onChange={e => onChange({ width: Math.max(20, Number(e.target.value)) })}
+              className="w-full px-2 py-1 text-sm border rounded bg-background"
+            />
+          </Field>
+          <Field label="Height">
+            <input
+              type="number"
+              value={decor.height ?? 60}
+              onChange={e => onChange({ height: Math.max(20, Number(e.target.value)) })}
+              className="w-full px-2 py-1 text-sm border rounded bg-background"
+            />
+          </Field>
+        </div>
+      )}
+      <Field label="Fill">
+        <input
+          type="color"
+          value={decor.fill ?? "#111827"}
+          onChange={e => onChange({ fill: e.target.value })}
+          className="w-full h-8 rounded border"
+        />
+      </Field>
+      <Field label="Text color">
+        <input
+          type="color"
+          value={decor.color ?? "#FFFFFF"}
+          onChange={e => onChange({ color: e.target.value })}
+          className="w-full h-8 rounded border"
+        />
+      </Field>
+    </div>
+  )
+}
+
+function SectionSummary({
+  seats, ticketTypes,
+}: { seats: EditorSeat[]; ticketTypes: ReservedEventTicketType[] }) {
+  const summary = useMemo(() => {
+    const map = new Map<string, { count: number; tierName: string; tierIdx: number }>()
+    for (const s of seats) {
+      const idx = ticketTypes.findIndex(t => t.id === s.ticket_type_id)
+      const tierName = idx >= 0 ? ticketTypes[idx].name : "—"
+      const cur = map.get(s.section)
+      if (cur) cur.count += 1
+      else map.set(s.section, { count: 1, tierName, tierIdx: idx })
+    }
+    return Array.from(map.entries()).map(([name, info]) => ({ name, ...info }))
+  }, [seats, ticketTypes])
+  if (summary.length === 0) {
+    return <div className="text-xs text-muted-foreground">No sections yet.</div>
+  }
+  return (
+    <ul className="space-y-1 text-xs">
+      {summary.map(s => (
+        <li key={s.name} className="flex items-center gap-2">
+          <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: tierColor(s.tierIdx) }} />
+          <span className="flex-1 truncate">{s.name}</span>
+          <span className="text-muted-foreground">{s.count}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">{label}</span>
+      {children}
+    </label>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Add Section modal
+// ---------------------------------------------------------------------------
+
+function AddSectionModal({
+  ticketTypes, existingSections, onCancel, onSubmit,
+}: {
+  ticketTypes: ReservedEventTicketType[]
+  existingSections: string[]
+  onCancel: () => void
+  onSubmit: (opts: { name: string; rows: number; cols: number; spacing: number; ticket_type_id: string; startRow?: number }) => void
+}) {
+  const [name, setName] = useState("")
+  const [rows, setRows] = useState(8)
+  const [cols, setCols] = useState(12)
+  const [spacing, setSpacing] = useState(DEFAULT_SEAT_SPACING)
+  const [ticketTypeId, setTicketTypeId] = useState(ticketTypes[0]?.id ?? "")
+  const [startRow, setStartRow] = useState(0)
+
+  const submit = () => {
+    if (!name.trim()) { toast.error("Section name required"); return }
+    if (!ticketTypeId) { toast.error("Pick a ticket type"); return }
+    if (rows < 1 || cols < 1) { toast.error("Rows and cols must be positive"); return }
+    onSubmit({
+      name: name.trim(),
+      rows, cols, spacing,
+      ticket_type_id: ticketTypeId,
+      startRow,
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-background rounded-lg w-full max-w-md shadow-xl">
+        <div className="flex items-center justify-between px-5 py-3 border-b">
+          <h3 className="font-semibold">Add section</h3>
+          <button onClick={onCancel} className="p-1 rounded hover:bg-accent"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          <Field label="Section name">
+            <input
+              autoFocus
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="e.g. Floor 2 Left"
+              list="existing-sections"
+              className="w-full px-3 py-2 text-sm border rounded bg-background"
+            />
+            <datalist id="existing-sections">
+              {existingSections.map(s => <option key={s} value={s} />)}
+            </datalist>
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Rows">
+              <input type="number" min={1} value={rows} onChange={e => setRows(Math.max(1, Number(e.target.value)))}
+                className="w-full px-3 py-2 text-sm border rounded bg-background" />
+            </Field>
+            <Field label="Cols">
+              <input type="number" min={1} value={cols} onChange={e => setCols(Math.max(1, Number(e.target.value)))}
+                className="w-full px-3 py-2 text-sm border rounded bg-background" />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Seat spacing (px)">
+              <input type="number" min={10} value={spacing} onChange={e => setSpacing(Math.max(10, Number(e.target.value)))}
+                className="w-full px-3 py-2 text-sm border rounded bg-background" />
+            </Field>
+            <Field label="Start row at (A=0)">
+              <input type="number" min={0} value={startRow} onChange={e => setStartRow(Math.max(0, Number(e.target.value)))}
+                className="w-full px-3 py-2 text-sm border rounded bg-background" />
+            </Field>
+          </div>
+          <Field label="Ticket type">
+            <select
+              value={ticketTypeId}
+              onChange={e => setTicketTypeId(e.target.value)}
+              className="w-full px-3 py-2 text-sm border rounded bg-background"
+            >
+              {ticketTypes.length === 0 ? (
+                <option value="">No ticket types — add them first</option>
+              ) : ticketTypes.map(tt => (
+                <option key={tt.id} value={tt.id}>{tt.name} — {Number(tt.price).toLocaleString()}</option>
+              ))}
+            </select>
+          </Field>
+          <div className="text-xs text-muted-foreground">
+            Generates {rows * cols} seats at the canvas center. You can drag individual seats to fit afterwards.
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t bg-muted/30">
+          <button onClick={onCancel} className="px-3 py-1.5 text-sm rounded hover:bg-accent">Cancel</button>
+          <button
+            onClick={submit}
+            disabled={ticketTypes.length === 0}
+            className="inline-flex items-center gap-1.5 rounded bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
+          >
+            <Plus className="h-4 w-4" /> Add
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function stageToCanvas(
+  pt: { x: number; y: number },
+  stagePos: { x: number; y: number },
+  stageScale: number,
+) {
+  return {
+    x: (pt.x - stagePos.x) / stageScale,
+    y: (pt.y - stagePos.y) / stageScale,
+  }
+}
