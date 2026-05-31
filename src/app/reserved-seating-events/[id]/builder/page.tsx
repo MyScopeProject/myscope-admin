@@ -144,6 +144,13 @@ function BuilderInner() {
   const [seats, setSeats] = useState<EditorSeat[]>([])
   const [decor, setDecor] = useState<EditorDecor[]>([])
   const [selection, setSelection] = useState<Selection>(null)
+  // Per-event viewport — defaulted from the loaded seat-map state so a
+  // previously-built map keeps its canvas dimensions and background image.
+  const [viewbox, setViewbox] = useState<{ width: number; height: number }>(DEFAULT_VIEWBOX)
+  const [backgroundUrl, setBackgroundUrl] = useState<string | null>(null)
+  // Seats the server reports as held/booked — saving would refuse, so we
+  // surface a banner instead of letting the admin discover it on submit.
+  const [lockedSeats, setLockedSeats] = useState(0)
 
   // Modals
   const [showAddSection, setShowAddSection] = useState(false)
@@ -163,15 +170,62 @@ function BuilderInner() {
     let cancelled = false
     ;(async () => {
       try {
-        const [evRes, ttRes] = await Promise.all([
-          reservedEventsAPI.list(),                       // event lives in this list
+        // Three parallel calls — event meta + ticket types + existing seat-map
+        // state. The seat-map fetch tolerates a 404 (returns empty seats) so a
+        // brand-new event still opens a blank canvas instead of erroring.
+        const [evRes, ttRes, smRes] = await Promise.all([
+          reservedEventsAPI.list(),
           reservedEventsAPI.ticketTypes(eventId),
+          reservedEventsAPI.getSeatMap(eventId).catch(() => null),
         ])
         if (cancelled) return
         const events = (evRes.data?.data?.events || []) as ReservedEvent[]
         const ev = events.find((e: ReservedEvent) => e.id === eventId) ?? null
         setEvent(ev)
         setTicketTypes(ttRes.data?.data?.ticket_types || [])
+
+        // Hydrate canvas state from the server. We only restore seats that
+        // already have (x, y) — a grid-mode event whose seats are positionless
+        // would otherwise stack on top of each other at the origin.
+        const sm = smRes?.data?.data
+        if (sm) {
+          if (sm.layout) {
+            setViewbox({
+              width:  Number(sm.layout.viewbox_width)  || DEFAULT_VIEWBOX.width,
+              height: Number(sm.layout.viewbox_height) || DEFAULT_VIEWBOX.height,
+            })
+            setBackgroundUrl(sm.layout.background_image_url || null)
+            const decorHydrated: EditorDecor[] = (sm.layout.decor || [])
+              .filter(d => d.kind === "rect" || d.kind === "text")
+              .map((d, i) => ({
+                id: d.id || uid("decor"),
+                kind: d.kind as "rect" | "text",
+                x: Number(d.x ?? 0),
+                y: Number(d.y ?? 0),
+                width:  d.width  != null ? Number(d.width)  : undefined,
+                height: d.height != null ? Number(d.height) : undefined,
+                label: d.label || (d.kind === "rect" ? `STAGE_${i}` : "Label"),
+                fill:  d.fill  || undefined,
+                color: d.color || undefined,
+              }))
+            setDecor(decorHydrated)
+          }
+          const positioned = (sm.seats || []).filter(s => s.x != null && s.y != null)
+          const seatsHydrated: EditorSeat[] = positioned.map(s => ({
+            id: uid("seat"),
+            section: s.section || "General",
+            row_label: s.row_label || "A",
+            seat_number: String(s.seat_number ?? ""),
+            x: Number(s.x),
+            y: Number(s.y),
+            ticket_type_id: s.ticket_type_id || "",
+          }))
+          setSeats(seatsHydrated)
+          const locked = (sm.seats || []).filter(
+            s => s.status === "held" || s.status === "booked",
+          ).length
+          setLockedSeats(locked)
+        }
       } catch {
         toast.error("Failed to load event")
       } finally {
@@ -314,9 +368,9 @@ function BuilderInner() {
     setSaving(true)
     try {
       const payload: VisualSeatMapPayload = {
-        viewbox_width:  DEFAULT_VIEWBOX.width,
-        viewbox_height: DEFAULT_VIEWBOX.height,
-        background_image_url: null,
+        viewbox_width:  viewbox.width,
+        viewbox_height: viewbox.height,
+        background_image_url: backgroundUrl,
         decor: decor.map<VisualSeatMapDecor>(d => ({
           id: d.id,
           kind: d.kind,
@@ -349,7 +403,7 @@ function BuilderInner() {
     } finally {
       setSaving(false)
     }
-  }, [eventId, event, seats, decor, router])
+  }, [eventId, event, seats, decor, viewbox, backgroundUrl, router])
 
   // ----- Render -----------------------------------------------------------
 
@@ -375,9 +429,17 @@ function BuilderInner() {
             {event.venue_name ?? "Venue TBA"} · {seats.length} seat{seats.length === 1 ? "" : "s"} · {decor.length} decor item{decor.length === 1 ? "" : "s"}
           </div>
         </div>
+        {lockedSeats > 0 && (
+          <div
+            className="hidden md:inline-flex items-center gap-1.5 rounded-md bg-amber-100 dark:bg-amber-500/15 px-3 py-1.5 text-xs font-medium text-amber-800 dark:text-amber-300"
+            title="Saving will fail until these are released. Wait for hold expiry or refund the bookings."
+          >
+            {lockedSeats} seat{lockedSeats === 1 ? "" : "s"} held/booked — save will refuse
+          </div>
+        )}
         <button
           onClick={save}
-          disabled={saving || seats.length === 0}
+          disabled={saving || seats.length === 0 || lockedSeats > 0}
           className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
         >
           <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save seat map"}
@@ -461,7 +523,7 @@ function BuilderInner() {
               {/* Viewport rectangle so admin sees the canvas bounds */}
               <Rect
                 x={0} y={0}
-                width={DEFAULT_VIEWBOX.width} height={DEFAULT_VIEWBOX.height}
+                width={viewbox.width} height={viewbox.height}
                 fill="#FFFFFF" stroke="#E5E7EB" strokeWidth={1}
               />
 

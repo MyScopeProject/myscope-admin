@@ -401,6 +401,36 @@ export const reservedEventsAPI = {
     eventId: string,
     body: VisualSeatMapPayload,
   ) => api.post(`/organizer/events/${eventId}/seat-map`, body),
+  // Load the current seat-map state for the canvas builder (works at any
+  // approval status; returns an empty seats[] + default viewport for events
+  // that haven't had a map built yet).
+  getSeatMap: (
+    eventId: string,
+  ) => api.get<{
+    success: boolean
+    data: {
+      event_id: string
+      layout: {
+        viewbox_width: number
+        viewbox_height: number
+        background_image_url: string | null
+        decor: VisualSeatMapDecor[]
+      }
+      seats: Array<{
+        id: string
+        section: string | null
+        row_label: string | null
+        seat_number: string | number | null
+        seat_label: string | null
+        seat_type: 'standard' | 'accessible' | 'restricted_view' | 'aisle' | null
+        status: 'available' | 'held' | 'booked' | 'disabled'
+        x: number | null
+        y: number | null
+        rotation: number | null
+        ticket_type_id: string | null
+      }>
+    }
+  }>(`/organizer/events/${eventId}/seat-map`),
   approve: (eventId: string) => api.post(`/admin/events/${eventId}/approve`),
   reject: (eventId: string, reason: string) =>
     api.post(`/admin/events/${eventId}/reject`, { reason }),
