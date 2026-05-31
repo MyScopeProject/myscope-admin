@@ -37,10 +37,8 @@ import {
   type VisualSeatMapSeat,
 } from "@/lib/apiEndpoints"
 import toast from "react-hot-toast"
-import type Konva from "konva"
 import {
   ArrowLeft,
-  ChevronDown,
   LayoutGrid,
   Plus,
   Save,
@@ -49,15 +47,21 @@ import {
   Type as TypeIcon,
   X,
 } from "lucide-react"
+import type { EditorSeat, EditorDecor, Selection } from "./BuilderCanvas"
 
-// react-konva uses the browser's window. Disable SSR so Next doesn't try to
-// render the Stage/Layer on the server.
-const Stage = dynamic(() => import("react-konva").then(m => m.Stage), { ssr: false })
-const Layer = dynamic(() => import("react-konva").then(m => m.Layer), { ssr: false })
-const Rect  = dynamic(() => import("react-konva").then(m => m.Rect),  { ssr: false })
-const KText = dynamic(() => import("react-konva").then(m => m.Text),  { ssr: false })
-const Circle = dynamic(() => import("react-konva").then(m => m.Circle), { ssr: false })
-const Group = dynamic(() => import("react-konva").then(m => m.Group), { ssr: false })
+// react-konva uses the browser's window AND has a custom React reconciler
+// that needs its full subtree mounted synchronously. We dynamic-import the
+// whole canvas as one chunk (ssr:false) instead of dynamic-importing each
+// react-konva sub-component, which would leave the Stage with placeholder
+// children and render nothing until every import resolved.
+const BuilderCanvas = dynamic(() => import("./BuilderCanvas"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
+      Loading canvas…
+    </div>
+  ),
+})
 
 // Palette for ticket-type swatches. Indexed by tier position; auditoriums
 // rarely have >6 tiers so this comfortably covers them. Matches BUILDER_COLORS
@@ -65,7 +69,6 @@ const Group = dynamic(() => import("react-konva").then(m => m.Group), { ssr: fal
 const TIER_PALETTE = ["#7F77DD", "#1D9E75", "#BA7517", "#D85A30", "#185FA5", "#993556", "#6B7280"]
 
 const DEFAULT_VIEWBOX = { width: 1600, height: 1200 }
-const SEAT_RADIUS = 8
 const DEFAULT_SEAT_SPACING = 22 // px between seats in generated rows
 
 // Spreadsheet-style row labels (A, B, …, Z, AA, AB, …)
@@ -80,34 +83,8 @@ function rowLabelFromIndex(n: number): string {
   return s
 }
 
-// ----- Editor state types ------------------------------------------------
-
-interface EditorSeat {
-  id: string                    // local UUID
-  section: string
-  row_label: string
-  seat_number: string
-  x: number
-  y: number
-  ticket_type_id: string
-}
-
-interface EditorDecor {
-  id: string
-  kind: "rect" | "text"
-  x: number
-  y: number
-  width?: number
-  height?: number
-  label?: string
-  fill?: string
-  color?: string
-}
-
-type Selection =
-  | { kind: "seat";  id: string }
-  | { kind: "decor"; id: string }
-  | null
+// Editor state types live in BuilderCanvas.tsx since they're the input
+// contract for the renderer; re-imported above.
 
 // ----- Helpers -----------------------------------------------------------
 
@@ -155,8 +132,7 @@ function BuilderInner() {
   // Modals
   const [showAddSection, setShowAddSection] = useState(false)
 
-  // Stage transform — pan + zoom
-  const stageRef = useRef<Konva.Stage | null>(null)
+  // Stage transform — pan + zoom. stageRef lives inside BuilderCanvas now.
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 })
   const [stageScale, setStageScale] = useState(1)
   const [stageSize, setStageSize] = useState({ width: 1200, height: 700 })
@@ -235,17 +211,29 @@ function BuilderInner() {
     return () => { cancelled = true }
   }, [eventId])
 
-  // Resize stage to fit container.
+  // Resize stage to fit container. ResizeObserver picks up the first layout
+  // tick after PageLoader→canvas swap, plus any subsequent panel resizes.
+  // (A plain "measure on mount" effect doesn't work: the container isn't in
+  // the DOM until `loading` flips false, so the initial measurement would
+  // miss and the Stage would be stuck at its 1200×700 default forever.)
   useEffect(() => {
+    if (loading) return
+    const el = containerRef.current
+    if (!el) return
     const update = () => {
-      const el = containerRef.current
-      if (!el) return
-      setStageSize({ width: el.clientWidth, height: el.clientHeight })
+      const w = el.clientWidth
+      const h = el.clientHeight
+      if (w > 0 && h > 0) setStageSize({ width: w, height: h })
     }
     update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
     window.addEventListener("resize", update)
-    return () => window.removeEventListener("resize", update)
-  }, [])
+    return () => {
+      ro.disconnect()
+      window.removeEventListener("resize", update)
+    }
+  }, [loading])
 
   // Keyboard: Delete removes the selected item.
   useEffect(() => {
@@ -328,28 +316,8 @@ function BuilderInner() {
     setSelection({ kind: "decor", id })
   }, [stagePos, stageScale, stageSize])
 
-  // ----- Wheel zoom (handler on Stage) -----------------------------------
-
-  const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
-    e.evt.preventDefault()
-    const scaleBy = 1.08
-    const stage = e.target.getStage()
-    if (!stage) return
-    const oldScale = stage.scaleX()
-    const pointer = stage.getPointerPosition()
-    if (!pointer) return
-    const mousePointTo = {
-      x: (pointer.x - stage.x()) / oldScale,
-      y: (pointer.y - stage.y()) / oldScale,
-    }
-    const direction = e.evt.deltaY > 0 ? -1 : 1
-    const newScale = Math.max(0.2, Math.min(4, direction > 0 ? oldScale * scaleBy : oldScale / scaleBy))
-    setStageScale(newScale)
-    setStagePos({
-      x: pointer.x - mousePointTo.x * newScale,
-      y: pointer.y - mousePointTo.y * newScale,
-    })
-  }, [])
+  // Wheel-zoom + drag-pan are owned by BuilderCanvas (it has access to the
+  // Konva stage ref). The page only stores the resulting pos / scale.
 
   // ----- Save -------------------------------------------------------------
 
@@ -497,113 +465,21 @@ function BuilderInner() {
           className="flex-1 relative bg-[radial-gradient(circle_at_1px_1px,_rgba(0,0,0,0.06)_1px,_transparent_0)]"
           style={{ backgroundSize: "20px 20px" }}
         >
-          <Stage
-            ref={stageRef as any}
-            width={stageSize.width}
-            height={stageSize.height}
-            scaleX={stageScale}
-            scaleY={stageScale}
-            x={stagePos.x}
-            y={stagePos.y}
-            draggable
-            onWheel={handleWheel as any}
-            onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
-              // Track stage pan position
-              const stage = e.target.getStage()
-              if (stage && e.target === stage) {
-                setStagePos({ x: stage.x(), y: stage.y() })
-              }
-            }}
-            onClick={(e: Konva.KonvaEventObject<MouseEvent>) => {
-              // Click on empty stage deselects
-              if (e.target === e.target.getStage()) setSelection(null)
-            }}
-          >
-            <Layer>
-              {/* Viewport rectangle so admin sees the canvas bounds */}
-              <Rect
-                x={0} y={0}
-                width={viewbox.width} height={viewbox.height}
-                fill="#FFFFFF" stroke="#E5E7EB" strokeWidth={1}
-              />
-
-              {/* Decor */}
-              {decor.map(d => {
-                const isSel = selection?.kind === "decor" && selection.id === d.id
-                if (d.kind === "rect") {
-                  return (
-                    <Group
-                      key={d.id}
-                      x={d.x} y={d.y}
-                      draggable
-                      onClick={() => setSelection({ kind: "decor", id: d.id })}
-                      onTap={() => setSelection({ kind: "decor", id: d.id })}
-                      onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
-                        const t = e.target
-                        setDecor(arr => arr.map(x => x.id === d.id ? { ...x, x: Math.round(t.x()), y: Math.round(t.y()) } : x))
-                      }}
-                    >
-                      <Rect
-                        width={d.width ?? 200} height={d.height ?? 60}
-                        fill={d.fill ?? "#111827"}
-                        stroke={isSel ? "#3B82F6" : "transparent"}
-                        strokeWidth={isSel ? 2 : 0}
-                      />
-                      {d.label ? (
-                        <KText
-                          width={d.width ?? 200} height={d.height ?? 60}
-                          text={d.label}
-                          fill={d.color ?? "#FFFFFF"}
-                          align="center" verticalAlign="middle"
-                          fontSize={18} fontStyle="bold"
-                        />
-                      ) : null}
-                    </Group>
-                  )
-                }
-                return (
-                  <KText
-                    key={d.id}
-                    x={d.x} y={d.y}
-                    text={d.label ?? "LABEL"}
-                    fill={d.color ?? "#374151"}
-                    fontSize={16} fontStyle="bold"
-                    draggable
-                    onClick={() => setSelection({ kind: "decor", id: d.id })}
-                    onTap={() => setSelection({ kind: "decor", id: d.id })}
-                    stroke={isSel ? "#3B82F6" : undefined}
-                    strokeWidth={isSel ? 1 : 0}
-                    onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
-                      const t = e.target
-                      setDecor(arr => arr.map(x => x.id === d.id ? { ...x, x: Math.round(t.x()), y: Math.round(t.y()) } : x))
-                    }}
-                  />
-                )
-              })}
-
-              {/* Seats */}
-              {seats.map(s => {
-                const isSel = selection?.kind === "seat" && selection.id === s.id
-                const color = tierColor(tierIndexById(s.ticket_type_id))
-                return (
-                  <Circle
-                    key={s.id}
-                    x={s.x} y={s.y} radius={SEAT_RADIUS}
-                    fill={color}
-                    stroke={isSel ? "#0F172A" : "#FFFFFF"}
-                    strokeWidth={isSel ? 2 : 1}
-                    draggable
-                    onClick={() => setSelection({ kind: "seat", id: s.id })}
-                    onTap={() => setSelection({ kind: "seat", id: s.id })}
-                    onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
-                      const t = e.target
-                      setSeats(arr => arr.map(x => x.id === s.id ? { ...x, x: Math.round(t.x()), y: Math.round(t.y()) } : x))
-                    }}
-                  />
-                )
-              })}
-            </Layer>
-          </Stage>
+          <BuilderCanvas
+            viewbox={viewbox}
+            stageSize={stageSize}
+            stagePos={stagePos}
+            stageScale={stageScale}
+            setStagePos={setStagePos}
+            setStageScale={setStageScale}
+            seats={seats}
+            decor={decor}
+            setSeats={setSeats}
+            setDecor={setDecor}
+            selection={selection}
+            setSelection={setSelection}
+            seatColor={(id) => tierColor(tierIndexById(id))}
+          />
 
           {/* Stage transform reset button */}
           <button
