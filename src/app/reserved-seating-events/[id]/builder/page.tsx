@@ -129,6 +129,36 @@ function BuilderInner() {
   // surface a banner instead of letting the admin discover it on submit.
   const [lockedSeats, setLockedSeats] = useState(0)
 
+  // Undo history — snapshot of (seats, decor) right BEFORE each mutation.
+  // Capped at 50 entries to bound memory; older snapshots roll off.
+  const [history, setHistory] = useState<Array<{ seats: EditorSeat[]; decor: EditorDecor[] }>>([])
+  // Dirty since last save/hydration. Drives the auto-save-on-back behaviour
+  // and (later) a "unsaved changes" indicator. Reset to false in save success
+  // and after the hydration effect finishes loading existing state.
+  const [dirty, setDirty] = useState(false)
+
+  // Snapshot (seats, decor) onto the undo stack. Called BEFORE each user
+  // mutation; on undo we pop the most recent snapshot back into place.
+  const pushHistory = useCallback(() => {
+    setHistory(h => {
+      const next = h.length >= 50 ? h.slice(1) : h.slice()
+      next.push({ seats, decor })
+      return next
+    })
+    setDirty(true)
+  }, [seats, decor])
+
+  const undo = useCallback(() => {
+    setHistory(h => {
+      if (h.length === 0) return h
+      const prev = h[h.length - 1]
+      setSeats(prev.seats)
+      setDecor(prev.decor)
+      setSelection(null)
+      return h.slice(0, -1)
+    })
+  }, [])
+
   // Modals
   const [showAddSection, setShowAddSection] = useState(false)
 
@@ -238,18 +268,40 @@ function BuilderInner() {
   // Keyboard: Delete removes the selected item.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Delete" && e.key !== "Backspace") return
       const t = e.target as HTMLElement | null
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return
+      const inField = !!(t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT"))
+
+      // Cmd/Ctrl+Z → undo. Cmd/Ctrl+Shift+Z is left alone (browser redo).
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
+        if (inField) return
+        e.preventDefault()
+        undo()
+        return
+      }
+
+      if (e.key !== "Delete" && e.key !== "Backspace") return
+      if (inField) return
       if (!selection) return
       e.preventDefault()
-      if (selection.kind === "seat")  setSeats(s => s.filter(x => x.id !== selection.id))
-      if (selection.kind === "decor") setDecor(d => d.filter(x => x.id !== selection.id))
+      if (selection.kind === "seat") {
+        pushHistory()
+        setSeats(s => s.filter(x => x.id !== selection.id))
+      }
+      if (selection.kind === "decor") {
+        pushHistory()
+        setDecor(d => d.filter(x => x.id !== selection.id))
+      }
+      // For section selection the delete shortcut routes to removeSection
+      // (which already prompts + pushes history).
+      if (selection.kind === "section") {
+        removeSection(selection.name)
+        return
+      }
       setSelection(null)
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [selection])
+  }, [selection, undo, pushHistory, removeSection])
 
   // ----- Tools ------------------------------------------------------------
 
@@ -287,9 +339,48 @@ function BuilderInner() {
         })
       }
     }
+    pushHistory()
     setSeats(prev => [...prev, ...next])
     toast.success(`Added section "${name}" (${next.length} seats)`)
-  }, [stagePos, stageScale, stageSize])
+  }, [stagePos, stageScale, stageSize, pushHistory])
+
+  // Bake a section drag's delta into each seat's absolute (x, y) and push
+  // one undo entry for the whole move.
+  const moveSection = useCallback((sectionName: string, dx: number, dy: number) => {
+    if (dx === 0 && dy === 0) return
+    pushHistory()
+    setSeats(arr => arr.map(s =>
+      s.section === sectionName
+        ? { ...s, x: Math.round(s.x + dx), y: Math.round(s.y + dy) }
+        : s))
+  }, [pushHistory])
+
+  // Drag handlers — each wraps a single history snapshot so undo backs out
+  // one move at a time. Called from BuilderCanvas.
+  const handleSeatMove = useCallback((seatId: string, x: number, y: number) => {
+    pushHistory()
+    setSeats(arr => arr.map(s => s.id === seatId ? { ...s, x, y } : s))
+  }, [pushHistory])
+
+  const handleDecorMove = useCallback((decorId: string, x: number, y: number) => {
+    pushHistory()
+    setDecor(arr => arr.map(d => d.id === decorId ? { ...d, x, y } : d))
+  }, [pushHistory])
+
+  // Remove every seat that belongs to a section. Called from the Section
+  // Summary trash icon; clears any selection that referenced that section.
+  const removeSection = useCallback((sectionName: string) => {
+    const count = seats.filter(s => s.section === sectionName).length
+    if (count === 0) return
+    const ok = typeof window === "undefined"
+      ? true
+      : window.confirm(`Remove section "${sectionName}" (${count} seat${count === 1 ? "" : "s"})?`)
+    if (!ok) return
+    pushHistory()
+    setSeats(arr => arr.filter(s => s.section !== sectionName))
+    setSelection(sel => (sel?.kind === "section" && sel.name === sectionName) ? null : sel)
+    toast.success(`Removed section "${sectionName}"`)
+  }, [seats, pushHistory])
 
   const addDecor = useCallback((kind: "rect" | "text", label = "") => {
     const center = stageToCanvas({
@@ -474,11 +565,12 @@ function BuilderInner() {
             setStageScale={setStageScale}
             seats={seats}
             decor={decor}
-            setSeats={setSeats}
-            setDecor={setDecor}
             selection={selection}
             setSelection={setSelection}
             seatColor={(id) => tierColor(tierIndexById(id))}
+            onSeatMove={handleSeatMove}
+            onDecorMove={handleDecorMove}
+            onSectionMove={moveSection}
           />
 
           {/* Stage transform reset button */}
