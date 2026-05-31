@@ -45,6 +45,7 @@ import {
   Square,
   Trash2,
   Type as TypeIcon,
+  Undo2,
   X,
 } from "lucide-react"
 import type { EditorSeat, EditorDecor, Selection } from "./BuilderCanvas"
@@ -232,6 +233,9 @@ function BuilderInner() {
           ).length
           setLockedSeats(locked)
         }
+        // Hydration is the baseline — nothing to undo yet, nothing dirty.
+        setHistory([])
+        setDirty(false)
       } catch {
         toast.error("Failed to load event")
       } finally {
@@ -265,6 +269,11 @@ function BuilderInner() {
     }
   }, [loading])
 
+  // removeSection is declared later (after addSection etc.) but the keyboard
+  // effect needs it now. A ref keeps the latest closure without dragging
+  // removeSection into the effect's deps, which would also force a TDZ here.
+  const removeSectionRef = useRef<((name: string) => void) | null>(null)
+
   // Keyboard: Delete removes the selected item.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -292,16 +301,17 @@ function BuilderInner() {
         setDecor(d => d.filter(x => x.id !== selection.id))
       }
       // For section selection the delete shortcut routes to removeSection
-      // (which already prompts + pushes history).
+      // (which already prompts + pushes history). Read via the ref so the
+      // effect doesn't depend on a not-yet-declared callback.
       if (selection.kind === "section") {
-        removeSection(selection.name)
+        removeSectionRef.current?.(selection.name)
         return
       }
       setSelection(null)
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [selection, undo, pushHistory, removeSection])
+  }, [selection, undo, pushHistory])
 
   // ----- Tools ------------------------------------------------------------
 
@@ -369,7 +379,7 @@ function BuilderInner() {
 
   // Remove every seat that belongs to a section. Called from the Section
   // Summary trash icon; clears any selection that referenced that section.
-  const removeSection = useCallback((sectionName: string) => {
+  const removeSection: (sectionName: string) => void = useCallback((sectionName: string) => {
     const count = seats.filter(s => s.section === sectionName).length
     if (count === 0) return
     const ok = typeof window === "undefined"
@@ -382,12 +392,17 @@ function BuilderInner() {
     toast.success(`Removed section "${sectionName}"`)
   }, [seats, pushHistory])
 
+  // Keep the keyboard-handler ref pointing at the freshest removeSection so
+  // pressing Delete on a selected section deletes it via the same prompt.
+  useEffect(() => { removeSectionRef.current = removeSection }, [removeSection])
+
   const addDecor = useCallback((kind: "rect" | "text", label = "") => {
     const center = stageToCanvas({
       x: stageSize.width / 2,
       y: stageSize.height / 2,
     }, stagePos, stageScale)
     const id = uid("decor")
+    pushHistory()
     if (kind === "rect") {
       setDecor(prev => [...prev, {
         id, kind: "rect",
@@ -405,7 +420,7 @@ function BuilderInner() {
       }])
     }
     setSelection({ kind: "decor", id })
-  }, [stagePos, stageScale, stageSize])
+  }, [stagePos, stageScale, stageSize, pushHistory])
 
   // Wheel-zoom + drag-pan are owned by BuilderCanvas (it has access to the
   // Konva stage ref). The page only stores the resulting pos / scale.
@@ -455,6 +470,8 @@ function BuilderInner() {
       const res = await reservedEventsAPI.buildSeatMap(eventId, payload)
       const out = res?.data?.data
       toast.success(`Saved (${out?.seats_created ?? seats.length} seats)`)
+      setDirty(false)
+      setHistory([])
       router.push("/reserved-seating-events")
     } catch (err: any) {
       const msg = err?.response?.data?.message || err?.message || "Save failed"
@@ -463,6 +480,28 @@ function BuilderInner() {
       setSaving(false)
     }
   }, [eventId, event, seats, decor, viewbox, backgroundUrl, router])
+
+  // Back-button handler — auto-save if there are unsaved changes, otherwise
+  // navigate straight away. Save() already navigates on success, so for the
+  // dirty path we just call it.
+  const goBack = useCallback(() => {
+    const targetUrl = "/reserved-seating-events"
+    if (!dirty || seats.length === 0) {
+      router.push(targetUrl)
+      return
+    }
+    if (lockedSeats > 0) {
+      const ok = window.confirm(
+        `Can't save — ${lockedSeats} seat${lockedSeats === 1 ? "" : "s"} held/booked. Leave without saving?`,
+      )
+      if (ok) router.push(targetUrl)
+      return
+    }
+    // Save will toast on error and stay on this page; on success it pushes
+    // to the list. setDirty(false) inside save() prevents a double-prompt
+    // from any subsequent navigation.
+    save()
+  }, [dirty, seats.length, lockedSeats, router, save])
 
   // ----- Render -----------------------------------------------------------
 
@@ -476,14 +515,20 @@ function BuilderInner() {
       {/* Top bar */}
       <div className="border-b bg-background flex items-center gap-3 px-4 py-2.5">
         <button
-          onClick={() => router.push("/reserved-seating-events")}
+          type="button"
+          onClick={goBack}
+          title={dirty ? "Save and go back" : "Back"}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
-          <ArrowLeft className="h-4 w-4" /> Back
+          <ArrowLeft className="h-4 w-4" />
+          {dirty && seats.length > 0 ? "Save & back" : "Back"}
         </button>
         <div className="h-5 w-px bg-border" />
         <div className="flex-1 min-w-0">
-          <div className="font-semibold truncate">{event.title}</div>
+          <div className="font-semibold truncate flex items-center gap-2">
+            <span className="truncate">{event.title}</span>
+            {dirty && <span className="shrink-0 text-[10px] uppercase tracking-wider text-amber-600 dark:text-amber-400">Unsaved</span>}
+          </div>
           <div className="text-xs text-muted-foreground truncate">
             {event.venue_name ?? "Venue TBA"} · {seats.length} seat{seats.length === 1 ? "" : "s"} · {decor.length} decor item{decor.length === 1 ? "" : "s"}
           </div>
@@ -497,6 +542,16 @@ function BuilderInner() {
           </div>
         )}
         <button
+          type="button"
+          onClick={undo}
+          disabled={history.length === 0}
+          title="Undo (Ctrl/Cmd+Z)"
+          className="inline-flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Undo2 className="h-4 w-4" /> Undo
+        </button>
+        <button
+          type="button"
           onClick={save}
           disabled={saving || seats.length === 0 || lockedSeats > 0}
           className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
@@ -584,24 +639,57 @@ function BuilderInner() {
 
         {/* Inspector */}
         <aside className="w-72 border-l bg-muted/30 flex flex-col">
-          {selection ? (
-            selection.kind === "seat" ? (
-              <SeatInspector
-                seat={seats.find(s => s.id === selection.id)!}
-                ticketTypes={ticketTypes}
-                onChange={patch => setSeats(arr => arr.map(s => s.id === selection.id ? { ...s, ...patch } : s))}
-                onDelete={() => { setSeats(arr => arr.filter(s => s.id !== selection.id)); setSelection(null) }}
-              />
-            ) : (
-              <DecorInspector
-                decor={decor.find(d => d.id === selection.id)!}
-                onChange={patch => setDecor(arr => arr.map(d => d.id === selection.id ? { ...d, ...patch } : d))}
-                onDelete={() => { setDecor(arr => arr.filter(d => d.id !== selection.id)); setSelection(null) }}
-              />
-            )
+          {selection?.kind === "seat" ? (
+            <SeatInspector
+              seat={seats.find(s => s.id === selection.id)!}
+              ticketTypes={ticketTypes}
+              onChange={patch => {
+                pushHistory()
+                setSeats(arr => arr.map(s => s.id === selection.id ? { ...s, ...patch } : s))
+              }}
+              onDelete={() => {
+                pushHistory()
+                setSeats(arr => arr.filter(s => s.id !== selection.id))
+                setSelection(null)
+              }}
+            />
+          ) : selection?.kind === "decor" ? (
+            <DecorInspector
+              decor={decor.find(d => d.id === selection.id)!}
+              onChange={patch => {
+                pushHistory()
+                setDecor(arr => arr.map(d => d.id === selection.id ? { ...d, ...patch } : d))
+              }}
+              onDelete={() => {
+                pushHistory()
+                setDecor(arr => arr.filter(d => d.id !== selection.id))
+                setSelection(null)
+              }}
+            />
+          ) : selection?.kind === "section" ? (
+            <SectionInspector
+              sectionName={selection.name}
+              seats={seats}
+              ticketTypes={ticketTypes}
+              onRename={(newName) => {
+                if (!newName.trim() || newName === selection.name) return
+                if (seats.some(s => s.section === newName)) {
+                  toast.error(`A section named "${newName}" already exists.`)
+                  return
+                }
+                pushHistory()
+                setSeats(arr => arr.map(s => s.section === selection.name ? { ...s, section: newName } : s))
+                setSelection({ kind: "section", name: newName })
+              }}
+              onBulkTier={(ticketTypeId) => {
+                pushHistory()
+                setSeats(arr => arr.map(s => s.section === selection.name ? { ...s, ticket_type_id: ticketTypeId } : s))
+              }}
+              onRemove={() => removeSection(selection.name)}
+            />
           ) : (
             <div className="p-4 text-sm text-muted-foreground">
-              Click a seat or decor item to edit it.
+              Click a seat, section, or decor item to edit it.
             </div>
           )}
 
@@ -610,7 +698,12 @@ function BuilderInner() {
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
               Sections in this map
             </div>
-            <SectionSummary seats={seats} ticketTypes={ticketTypes} />
+            <SectionSummary
+              seats={seats}
+              ticketTypes={ticketTypes}
+              onSelect={(name) => setSelection({ kind: "section", name })}
+              onRemove={removeSection}
+            />
           </div>
         </aside>
       </div>
@@ -754,8 +847,13 @@ function DecorInspector({
 }
 
 function SectionSummary({
-  seats, ticketTypes,
-}: { seats: EditorSeat[]; ticketTypes: ReservedEventTicketType[] }) {
+  seats, ticketTypes, onSelect, onRemove,
+}: {
+  seats: EditorSeat[]
+  ticketTypes: ReservedEventTicketType[]
+  onSelect: (name: string) => void
+  onRemove: (name: string) => void
+}) {
   const summary = useMemo(() => {
     const map = new Map<string, { count: number; tierName: string; tierIdx: number }>()
     for (const s of seats) {
@@ -773,13 +871,106 @@ function SectionSummary({
   return (
     <ul className="space-y-1 text-xs">
       {summary.map(s => (
-        <li key={s.name} className="flex items-center gap-2">
-          <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: tierColor(s.tierIdx) }} />
-          <span className="flex-1 truncate">{s.name}</span>
-          <span className="text-muted-foreground">{s.count}</span>
+        <li key={s.name} className="group flex items-center gap-2 rounded px-1 py-0.5 hover:bg-accent">
+          <span
+            className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+            style={{ background: tierColor(s.tierIdx) }}
+          />
+          <button
+            type="button"
+            onClick={() => onSelect(s.name)}
+            title="Select section"
+            className="flex-1 min-w-0 text-left truncate"
+          >
+            {s.name}
+          </button>
+          <span className="text-muted-foreground tabular-nums">{s.count}</span>
+          <button
+            type="button"
+            onClick={() => onRemove(s.name)}
+            title="Remove section"
+            className="opacity-0 group-hover:opacity-100 text-destructive hover:bg-destructive/10 rounded p-1 transition-opacity"
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
         </li>
       ))}
     </ul>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// SectionInspector — appears when a whole section is selected (clicked on its
+// bbox or label on the canvas). Lets the admin rename the section, bulk-assign
+// a different ticket tier to every seat, or remove the whole thing.
+// ---------------------------------------------------------------------------
+function SectionInspector({
+  sectionName, seats, ticketTypes, onRename, onBulkTier, onRemove,
+}: {
+  sectionName: string
+  seats: EditorSeat[]
+  ticketTypes: ReservedEventTicketType[]
+  onRename: (newName: string) => void
+  onBulkTier: (ticketTypeId: string) => void
+  onRemove: () => void
+}) {
+  const sectionSeats = seats.filter(s => s.section === sectionName)
+  // Mixed-tier sections show "—" so onBulkTier doesn't silently overwrite.
+  const tierIds = new Set(sectionSeats.map(s => s.ticket_type_id))
+  const currentTier = tierIds.size === 1 ? [...tierIds][0] : ""
+  // Local-edited name so the user can type without each keystroke pushing
+  // history. Commit happens on Enter or blur.
+  const [draftName, setDraftName] = useState(sectionName)
+  useEffect(() => { setDraftName(sectionName) }, [sectionName])
+
+  return (
+    <div className="p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Section</h3>
+        <button
+          type="button"
+          onClick={onRemove}
+          title="Remove section"
+          className="text-destructive hover:bg-destructive/10 rounded p-1.5"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
+      <Field label="Name">
+        <input
+          value={draftName}
+          onChange={e => setDraftName(e.target.value)}
+          onBlur={() => onRename(draftName.trim())}
+          onKeyDown={e => {
+            if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur()
+            if (e.key === "Escape") setDraftName(sectionName)
+          }}
+          className="w-full px-2 py-1 text-sm border rounded bg-background"
+        />
+      </Field>
+      <div className="text-xs text-muted-foreground">
+        {sectionSeats.length} seat{sectionSeats.length === 1 ? "" : "s"}
+      </div>
+      <Field label={tierIds.size > 1 ? "Bulk ticket type (mixed)" : "Ticket type"}>
+        <select
+          aria-label="Section ticket type"
+          value={currentTier}
+          onChange={e => onBulkTier(e.target.value)}
+          className="w-full px-2 py-1 text-sm border rounded bg-background"
+        >
+          {tierIds.size > 1 && <option value="" disabled>— mixed —</option>}
+          {ticketTypes.map(tt => (
+            <option key={tt.id} value={tt.id}>
+              {tt.name} — {Number(tt.price).toLocaleString()}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <p className="text-[11px] text-muted-foreground">
+        Drag the section&rsquo;s outline (the empty space inside its bounds) to move
+        every seat together. Individual seats can still be nudged one at a time.
+      </p>
+    </div>
   )
 }
 
