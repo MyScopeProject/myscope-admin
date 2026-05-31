@@ -39,7 +39,9 @@ import {
 import toast from "react-hot-toast"
 import {
   ArrowLeft,
+  Image as ImageIcon,
   LayoutGrid,
+  ListOrdered,
   Plus,
   Save,
   Square,
@@ -72,7 +74,7 @@ const TIER_PALETTE = ["#7F77DD", "#1D9E75", "#BA7517", "#D85A30", "#185FA5", "#9
 const DEFAULT_VIEWBOX = { width: 1600, height: 1200 }
 const DEFAULT_SEAT_SPACING = 22 // px between seats in generated rows
 
-// Spreadsheet-style row labels (A, B, …, Z, AA, AB, …)
+// Spreadsheet-style row labels (A, B, …, Z, AA, AB, …) used by Renumber.
 function rowLabelFromIndex(n: number): string {
   let s = ""
   let i = n + 1
@@ -82,6 +84,32 @@ function rowLabelFromIndex(n: number): string {
     i = Math.floor((i - 1) / 26)
   }
   return s
+}
+
+// Increment a row label one step. Detects the "AA, BB, CC, …" balcony
+// convention (two identical characters) and increments the letter, e.g.
+// AA → BB. Otherwise falls back to spreadsheet-style (A→B, Z→AA, AA→AB).
+function nextRowLabel(label: string): string {
+  const up = label.toUpperCase()
+  if (up.length === 2 && up[0] === up[1] && up[0] >= "A" && up[0] <= "Y") {
+    const c = String.fromCharCode(up.charCodeAt(0) + 1)
+    return c + c
+  }
+  // Spreadsheet-style: parse base-26, +1, render back.
+  let n = 0
+  for (let i = 0; i < up.length; i++) {
+    const code = up.charCodeAt(i)
+    if (code < 65 || code > 90) return up // bail on non-letter input
+    n = n * 26 + (code - 64)
+  }
+  n += 1
+  let out = ""
+  while (n > 0) {
+    const r = (n - 1) % 26
+    out = String.fromCharCode(65 + r) + out
+    n = Math.floor((n - 1) / 26)
+  }
+  return out
 }
 
 // Editor state types live in BuilderCanvas.tsx since they're the input
@@ -162,6 +190,36 @@ function BuilderInner() {
 
   // Modals
   const [showAddSection, setShowAddSection] = useState(false)
+
+  // Background floor-plan upload state (kept separate from save so the
+  // background can be replaced without committing seats yet).
+  const [bgUploading, setBgUploading] = useState(false)
+  const bgFileInputRef = useRef<HTMLInputElement | null>(null)
+
+  const uploadBackground = useCallback(async (file: File) => {
+    setBgUploading(true)
+    try {
+      const res = await reservedEventsAPI.uploadLayoutDoc(file)
+      const url = res?.data?.data?.url
+      if (!url) throw new Error("Upload returned no URL")
+      pushHistory()
+      setBackgroundUrl(url)
+      toast.success("Background uploaded")
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } }, message?: string })?.response?.data?.message
+        || (err as Error)?.message
+        || "Upload failed"
+      toast.error(msg)
+    } finally {
+      setBgUploading(false)
+    }
+  }, [pushHistory])
+
+  const clearBackground = useCallback(() => {
+    if (!backgroundUrl) return
+    pushHistory()
+    setBackgroundUrl(null)
+  }, [backgroundUrl, pushHistory])
 
   // Stage transform — pan + zoom. stageRef lives inside BuilderCanvas now.
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 })
@@ -321,9 +379,13 @@ function BuilderInner() {
     cols: number
     spacing: number
     ticket_type_id: string
-    startRow?: number
+    // Row label to start at — admin types a letter directly ("A", "AA", "F").
+    // We walk forward via nextRowLabel() for subsequent rows, which handles
+    // both spreadsheet-style (A→B→…→Z→AA) and double-letter balcony style
+    // (AA→BB→CC). Falls back to "A" if blank.
+    startRowLabel?: string
   }) => {
-    const { name, rows, cols, spacing, ticket_type_id, startRow = 0 } = opts
+    const { name, rows, cols, spacing, ticket_type_id, startRowLabel = "A" } = opts
     // Drop at center of current viewport (in stage coords).
     const center = stageToCanvas({
       x: stageSize.width / 2,
@@ -335,8 +397,8 @@ function BuilderInner() {
     const originY = Math.round(center.y - blockHeight / 2)
 
     const next: EditorSeat[] = []
+    let rowLabel = (startRowLabel || "A").toUpperCase().trim() || "A"
     for (let r = 0; r < rows; r++) {
-      const rowLabel = rowLabelFromIndex(startRow + r)
       for (let c = 0; c < cols; c++) {
         next.push({
           id: uid("seat"),
@@ -348,6 +410,7 @@ function BuilderInner() {
           ticket_type_id,
         })
       }
+      rowLabel = nextRowLabel(rowLabel)
     }
     pushHistory()
     setSeats(prev => [...prev, ...next])
@@ -363,6 +426,27 @@ function BuilderInner() {
       s.section === sectionName
         ? { ...s, x: Math.round(s.x + dx), y: Math.round(s.y + dy) }
         : s))
+  }, [pushHistory])
+
+  // Bake a section resize into each seat's absolute (x, y). The Konva
+  // Transformer reports translation (tx, ty) and scale (sx, sy) at the end
+  // of the gesture — each seat's new position is `(tx + x*sx, ty + y*sy)`,
+  // which mirrors what the user saw visually before transformend reset the
+  // group's transform.
+  const resizeSection = useCallback((
+    sectionName: string,
+    tx: number, ty: number,
+    sx: number, sy: number,
+  ) => {
+    pushHistory()
+    setSeats(arr => arr.map(s => {
+      if (s.section !== sectionName) return s
+      return {
+        ...s,
+        x: Math.round(tx + s.x * sx),
+        y: Math.round(ty + s.y * sy),
+      }
+    }))
   }, [pushHistory])
 
   // Drag handlers — each wraps a single history snapshot so undo backs out
@@ -395,6 +479,55 @@ function BuilderInner() {
   // Keep the keyboard-handler ref pointing at the freshest removeSection so
   // pressing Delete on a selected section deletes it via the same prompt.
   useEffect(() => { removeSectionRef.current = removeSection }, [removeSection])
+
+  // Renumber rows + seat numbers based on visual position. Buckets seats
+  // by Y (so multiple sections at the same row share a row letter), assigns
+  // row letters top-to-bottom, then sorts each bucket left-to-right and
+  // assigns seat numbers 1..N — including seats from different sections
+  // that happen to share the row. Mirrors the reference seating diagram
+  // where, e.g., row A spans the left, center, and right blocks.
+  const renumberRows = useCallback(() => {
+    if (seats.length === 0) return
+    // Sort by Y to walk top-to-bottom.
+    const sorted = [...seats].sort((a, b) => a.y - b.y)
+    // Estimate row tolerance from typical vertical spacing — half the median
+    // y-gap between consecutive seats. Falls back to 12px for tiny maps.
+    const yDiffs: number[] = []
+    for (let i = 1; i < sorted.length; i++) {
+      const d = sorted[i].y - sorted[i - 1].y
+      if (d > 0.5) yDiffs.push(d)
+    }
+    yDiffs.sort((a, b) => a - b)
+    const medianDiff = yDiffs[Math.floor(yDiffs.length / 2)] || 22
+    const tolerance = Math.max(6, medianDiff * 0.6)
+    // Build buckets by adjacency — a new bucket starts when the gap to the
+    // previous seat exceeds `tolerance`.
+    const buckets: EditorSeat[][] = []
+    let lastY = -Infinity
+    for (const s of sorted) {
+      if (s.y - lastY > tolerance || buckets.length === 0) buckets.push([])
+      buckets[buckets.length - 1].push(s)
+      lastY = s.y
+    }
+    // Assign row labels + seat numbers. Within a bucket, sort by X so
+    // numbering reads left → right across whatever section the seats
+    // belong to. We DON'T touch the seats' `section` field — color/group
+    // ownership is independent of the row/number scheme.
+    const updates = new Map<string, { row_label: string; seat_number: string }>()
+    buckets.forEach((bucket, i) => {
+      const rowLabel = rowLabelFromIndex(i)
+      bucket.sort((a, b) => a.x - b.x)
+      bucket.forEach((seat, idx) => {
+        updates.set(seat.id, { row_label: rowLabel, seat_number: String(idx + 1) })
+      })
+    })
+    pushHistory()
+    setSeats(arr => arr.map(s => {
+      const u = updates.get(s.id)
+      return u ? { ...s, ...u } : s
+    }))
+    toast.success(`Renumbered ${buckets.length} row${buckets.length === 1 ? "" : "s"}`)
+  }, [seats, pushHistory])
 
   const addDecor = useCallback((kind: "rect" | "text", label = "") => {
     const center = stageToCanvas({
@@ -582,6 +715,55 @@ function BuilderInner() {
           >
             <TypeIcon className="h-4 w-4" /> Add text label
           </button>
+          <button
+            type="button"
+            onClick={renumberRows}
+            disabled={seats.length === 0}
+            title="Re-letter rows and renumber seats by visual position — useful after placing multiple sections in the same row."
+            className="inline-flex items-center gap-2 rounded px-3 py-2 hover:bg-accent text-left disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <ListOrdered className="h-4 w-4" /> Renumber rows
+          </button>
+
+          {/* Background floor-plan upload — the admin uploads the venue's
+              hand-drawn diagram so they can resize sections on top of it.
+              Stored on venue_layouts.background_image_url after save. */}
+          <div className="mt-4 px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Background
+          </div>
+          <div className="px-2 flex flex-col gap-1">
+            <input
+              ref={bgFileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              aria-label="Background image"
+              onChange={e => {
+                const f = e.target.files?.[0]
+                if (f) uploadBackground(f)
+                // Reset so re-selecting the same file fires onChange again.
+                if (e.target) e.target.value = ""
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => bgFileInputRef.current?.click()}
+              disabled={bgUploading}
+              className="inline-flex items-center gap-2 rounded px-3 py-2 hover:bg-accent text-left disabled:opacity-50"
+            >
+              <ImageIcon className="h-4 w-4" />
+              {bgUploading ? "Uploading…" : backgroundUrl ? "Replace background" : "Upload background"}
+            </button>
+            {backgroundUrl && (
+              <button
+                type="button"
+                onClick={clearBackground}
+                className="inline-flex items-center gap-2 rounded px-3 py-2 hover:bg-accent text-left text-destructive"
+              >
+                <X className="h-4 w-4" /> Clear background
+              </button>
+            )}
+          </div>
 
           <div className="mt-4 px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Ticket tiers
@@ -620,12 +802,14 @@ function BuilderInner() {
             setStageScale={setStageScale}
             seats={seats}
             decor={decor}
+            backgroundUrl={backgroundUrl}
             selection={selection}
             setSelection={setSelection}
             seatColor={(id) => tierColor(tierIndexById(id))}
             onSeatMove={handleSeatMove}
             onDecorMove={handleDecorMove}
             onSectionMove={moveSection}
+            onSectionResize={resizeSection}
           />
 
           {/* Stage transform reset button */}
@@ -993,24 +1177,31 @@ function AddSectionModal({
   ticketTypes: ReservedEventTicketType[]
   existingSections: string[]
   onCancel: () => void
-  onSubmit: (opts: { name: string; rows: number; cols: number; spacing: number; ticket_type_id: string; startRow?: number }) => void
+  onSubmit: (opts: { name: string; rows: number; cols: number; spacing: number; ticket_type_id: string; startRowLabel?: string }) => void
 }) {
   const [name, setName] = useState("")
   const [rows, setRows] = useState(8)
   const [cols, setCols] = useState(12)
   const [spacing, setSpacing] = useState(DEFAULT_SEAT_SPACING)
   const [ticketTypeId, setTicketTypeId] = useState(ticketTypes[0]?.id ?? "")
-  const [startRow, setStartRow] = useState(0)
+  // Letter label admin types directly. "A" for front sections, "AA" for the
+  // back balcony block in the reference layout. Lower-case is normalised.
+  const [startRowLabel, setStartRowLabel] = useState("A")
 
   const submit = () => {
     if (!name.trim()) { toast.error("Section name required"); return }
     if (!ticketTypeId) { toast.error("Pick a ticket type"); return }
     if (rows < 1 || cols < 1) { toast.error("Rows and cols must be positive"); return }
+    const cleaned = startRowLabel.toUpperCase().trim()
+    if (!/^[A-Z]+$/.test(cleaned)) {
+      toast.error("Start row label must be letters only (e.g. A, AA, F).")
+      return
+    }
     onSubmit({
       name: name.trim(),
       rows, cols, spacing,
       ticket_type_id: ticketTypeId,
-      startRow,
+      startRowLabel: cleaned,
     })
   }
 
@@ -1050,9 +1241,15 @@ function AddSectionModal({
               <input type="number" min={10} value={spacing} onChange={e => setSpacing(Math.max(10, Number(e.target.value)))}
                 className="w-full px-3 py-2 text-sm border rounded bg-background" />
             </Field>
-            <Field label="Start row at (A=0)">
-              <input type="number" min={0} value={startRow} onChange={e => setStartRow(Math.max(0, Number(e.target.value)))}
-                className="w-full px-3 py-2 text-sm border rounded bg-background" />
+            <Field label="Start row label">
+              <input
+                type="text"
+                value={startRowLabel}
+                onChange={e => setStartRowLabel(e.target.value)}
+                placeholder="A, AA, F …"
+                maxLength={3}
+                className="w-full px-3 py-2 text-sm border rounded bg-background uppercase"
+              />
             </Field>
           </div>
           <Field label="Ticket type">

@@ -9,8 +9,8 @@
 // then dynamic()-ing this whole file once from the page keeps the entire
 // canvas subtree as a single client-only chunk that mounts atomically.
 
-import { useRef } from "react"
-import { Stage, Layer, Rect, Text as KText, Circle, Group } from "react-konva"
+import { useEffect, useRef, useState } from "react"
+import { Stage, Layer, Rect, Text as KText, Circle, Group, Image as KImage, Transformer } from "react-konva"
 import type Konva from "konva"
 
 export interface EditorSeat {
@@ -52,6 +52,9 @@ interface Props {
   setStageScale: (scale: number) => void
   seats: EditorSeat[]
   decor: EditorDecor[]
+  // Background floor-plan image (rendered at viewport extents, opacity 0.4
+  // so the dot-grid + seats stay readable on top). Null = no background.
+  backgroundUrl: string | null
   selection: Selection
   setSelection: (sel: Selection) => void
   // Tier color resolver — null/missing ticket_type_id returns the fallback.
@@ -61,6 +64,9 @@ interface Props {
   onSeatMove:    (seatId:  string, x: number, y: number) => void
   onDecorMove:   (decorId: string, x: number, y: number) => void
   onSectionMove: (sectionName: string, dx: number, dy: number) => void
+  // Section resize via the Konva Transformer. After the gesture each seat
+  // ends up at: new = (tx + s.x * scaleX, ty + s.y * scaleY).
+  onSectionResize: (sectionName: string, tx: number, ty: number, scaleX: number, scaleY: number) => void
 }
 
 const SECTION_PADDING = 18 // px around section bbox for hit target + outline
@@ -70,12 +76,44 @@ export default function BuilderCanvas(props: Props) {
     viewbox, stageSize, stagePos, stageScale,
     setStagePos, setStageScale,
     seats, decor,
+    backgroundUrl,
     selection, setSelection,
     seatColor,
-    onSeatMove, onDecorMove, onSectionMove,
+    onSeatMove, onDecorMove, onSectionMove, onSectionResize,
   } = props
 
   const stageRef = useRef<Konva.Stage | null>(null)
+  // Section group refs keyed by section name — Konva Transformer needs the
+  // raw Node objects, and we resolve from name → ref on selection.
+  const sectionRefs = useRef<Record<string, Konva.Group | null>>({})
+  const transformerRef = useRef<Konva.Transformer | null>(null)
+
+  // Background image — loaded as an HTMLImageElement so Konva.Image can
+  // measure it. Re-runs whenever the URL changes.
+  const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null)
+  useEffect(() => {
+    if (!backgroundUrl) { setBgImage(null); return }
+    const img = new window.Image()
+    img.crossOrigin = "anonymous"
+    img.src = backgroundUrl
+    img.onload = () => setBgImage(img)
+    img.onerror = () => setBgImage(null)
+    return () => { img.onload = null; img.onerror = null }
+  }, [backgroundUrl])
+
+  // Attach the Transformer to the currently-selected section's Group node.
+  // Detaches automatically when selection changes to anything else.
+  useEffect(() => {
+    const t = transformerRef.current
+    if (!t) return
+    if (selection?.kind === "section") {
+      const node = sectionRefs.current[selection.name]
+      t.nodes(node ? [node] : [])
+    } else {
+      t.nodes([])
+    }
+    t.getLayer()?.batchDraw()
+  }, [selection, seats])
 
   // Group seats by section so we can render each section in its own draggable
   // <Group> with a bbox hit-target. Empty section names fall under "" — they
@@ -138,6 +176,18 @@ export default function BuilderCanvas(props: Props) {
           width={viewbox.width} height={viewbox.height}
           fill="#FFFFFF" stroke="#E5E7EB" strokeWidth={1}
         />
+
+        {/* Background floor-plan — fits to viewport, dimmed so seats stay
+            readable on top. The admin resizes sections to align with this. */}
+        {bgImage && (
+          <KImage
+            image={bgImage}
+            x={0} y={0}
+            width={viewbox.width} height={viewbox.height}
+            opacity={0.4}
+            listening={false}
+          />
+        )}
 
         {/* Decor */}
         {decor.map(d => {
@@ -219,29 +269,58 @@ export default function BuilderCanvas(props: Props) {
           const isSectionSel =
             selection?.kind === "section" && selection.name === sectionName
 
+          // Group seats by row so we can render the row label at the
+          // leftmost + rightmost X of each row. Matches the reference layout
+          // (A, B, C … U on both sides of each section block).
+          const rows = new Map<string, { minX: number; maxX: number; y: number }>()
+          for (const s of sectionSeats) {
+            const cur = rows.get(s.row_label)
+            if (cur) {
+              cur.minX = Math.min(cur.minX, s.x)
+              cur.maxX = Math.max(cur.maxX, s.x)
+              // y across a row may drift slightly if seats were nudged —
+              // average is more honest than picking the first one.
+              cur.y = (cur.y + s.y) / 2
+            } else {
+              rows.set(s.row_label, { minX: s.x, maxX: s.x, y: s.y })
+            }
+          }
+          const rowList = Array.from(rows.entries())
+
           return (
             <Group
               key={`section-${sectionName}`}
+              ref={(node: Konva.Group | null) => { sectionRefs.current[sectionName] = node }}
               x={0}
               y={0}
               draggable
               onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
                 const node = e.target
-                // We only care when the group itself was the drag target; if
-                // a seat inside was dragged Konva fires onDragEnd on the seat
-                // (which has its own handler), so this branch is the
-                // whole-section move.
                 if (node !== e.currentTarget) return
                 const dx = node.x()
                 const dy = node.y()
                 if (dx === 0 && dy === 0) return
-                // Reset the Konva node back to (0, 0) synchronously so the
-                // next React render (which passes x={0} y={0}) doesn't fight
-                // the node's current state. The page handler bakes the delta
-                // into seat coords + pushes one history entry.
                 node.x(0)
                 node.y(0)
                 onSectionMove(sectionName, dx, dy)
+              }}
+              onTransformEnd={(e: Konva.KonvaEventObject<Event>) => {
+                // Konva's Transformer scales the Group via scaleX/scaleY
+                // and may shift x/y (anchor-dependent). Bake both into
+                // each seat's stored (x, y) so the data model stays
+                // absolute (no per-section transform persisted).
+                const node = e.target
+                if (node !== e.currentTarget) return
+                const sx = node.scaleX()
+                const sy = node.scaleY()
+                const tx = node.x()
+                const ty = node.y()
+                node.scaleX(1)
+                node.scaleY(1)
+                node.x(0)
+                node.y(0)
+                if (sx === 1 && sy === 1 && tx === 0 && ty === 0) return
+                onSectionResize(sectionName, tx, ty, sx, sy)
               }}
             >
               {/* Section bbox hit-target. Always rendered but only visible
@@ -285,6 +364,34 @@ export default function BuilderCanvas(props: Props) {
                 </Group>
               ) : null}
 
+              {/* Row labels — text glyphs at the left + right of every row,
+                  like the reference layout. Non-listening so they don't
+                  interfere with drag/select on the section bbox or seats. */}
+              {rowList.map(([rowLabel, info]) => {
+                const labelX = info.minX - SEAT_RADIUS - 14
+                const rightX = info.maxX + SEAT_RADIUS + 6
+                return (
+                  <Group key={`rowlabel-${rowLabel}`} listening={false}>
+                    <KText
+                      x={labelX - 18} y={info.y - 7}
+                      width={18} height={14}
+                      text={rowLabel}
+                      fill="#6B7280"
+                      fontSize={11} fontStyle="600"
+                      align="right"
+                    />
+                    <KText
+                      x={rightX} y={info.y - 7}
+                      width={18} height={14}
+                      text={rowLabel}
+                      fill="#6B7280"
+                      fontSize={11} fontStyle="600"
+                      align="left"
+                    />
+                  </Group>
+                )
+              })}
+
               {/* Seats — each retains its own drag for fine adjustment. */}
               {sectionSeats.map(s => {
                 const isSel = selection?.kind === "seat" && selection.id === s.id
@@ -309,6 +416,25 @@ export default function BuilderCanvas(props: Props) {
             </Group>
           )
         })}
+
+        {/* Transformer — attaches to the selected section's Group so the
+            admin can drag the corner/side handles to resize. Rendered last
+            inside the Layer so its handles sit above the section content. */}
+        <Transformer
+          ref={transformerRef}
+          rotateEnabled={false}
+          flipEnabled={false}
+          // Constrain to reasonable bounds so the user can't collapse a
+          // section to zero or blow it past the viewport.
+          boundBoxFunc={(oldBox, newBox) => {
+            if (newBox.width < 30 || newBox.height < 30) return oldBox
+            return newBox
+          }}
+          anchorSize={9}
+          borderStroke="#3B82F6"
+          anchorStroke="#3B82F6"
+          anchorFill="#FFFFFF"
+        />
       </Layer>
     </Stage>
   )

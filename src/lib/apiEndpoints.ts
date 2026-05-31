@@ -434,6 +434,17 @@ export const reservedEventsAPI = {
   approve: (eventId: string) => api.post(`/admin/events/${eventId}/approve`),
   reject: (eventId: string, reason: string) =>
     api.post(`/admin/events/${eventId}/reject`, { reason }),
+  // Upload a layout document (image or PDF) — used by the visual builder as
+  // the background floor-plan reference. Returns the public URL.
+  uploadLayoutDoc: (file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return api.post<{ success: boolean; data: { url: string; name: string; type: string } }>(
+      '/organizer/events/upload-layout-doc',
+      fd,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    )
+  },
 }
 
 // Auth endpoints (public)
