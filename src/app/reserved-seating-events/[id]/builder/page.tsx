@@ -74,7 +74,7 @@ const TIER_PALETTE = ["#7F77DD", "#1D9E75", "#BA7517", "#D85A30", "#185FA5", "#9
 const DEFAULT_VIEWBOX = { width: 1600, height: 1200 }
 const DEFAULT_SEAT_SPACING = 22 // px between seats in generated rows
 
-// Spreadsheet-style row labels (A, B, …, Z, AA, AB, …) used by Renumber.
+// Spreadsheet-style row labels (A, B, …, Z, AA, AB, …) — used for zone 0.
 function rowLabelFromIndex(n: number): string {
   let s = ""
   let i = n + 1
@@ -84,6 +84,18 @@ function rowLabelFromIndex(n: number): string {
     i = Math.floor((i - 1) / 26)
   }
   return s
+}
+
+// Row label for a given (zone, row-within-zone). The renumber action detects
+// zones by Y-gap and switches the labelling scheme so different physical
+// blocks (e.g. orchestra vs balcony) get visually distinct numbering — matches
+// the reference layout where the top block uses A-U and the balcony uses
+// AA-MM. Zone 0 = single letters (A, B, … Z, AA, AB, …); zone 1 = double
+// letters (AA, BB, CC, … ZZ); zone 2 = triple letters (AAA, BBB, …); etc.
+function rowLabelForZone(zoneIdx: number, rowIdx: number): string {
+  if (zoneIdx === 0) return rowLabelFromIndex(rowIdx)
+  const c = String.fromCharCode(65 + (rowIdx % 26))
+  return c.repeat(zoneIdx + 1)
 }
 
 // Increment a row label one step. Detects the "AA, BB, CC, …" balcony
