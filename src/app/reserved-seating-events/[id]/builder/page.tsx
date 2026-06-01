@@ -168,6 +168,17 @@ function BuilderInner() {
     setBackgroundUrl(null)
   }, [backgroundUrl, pushHistory])
 
+  // Resize the canvas viewport — the white rectangle sections sit on. Used
+  // to match the canvas shape to the actual venue (wide arena vs tall
+  // auditorium). Clamped to a sensible range; min keeps a usable area, max
+  // avoids runaway memory in Konva when zoomed out.
+  const setViewboxDim = useCallback((axis: "width" | "height", value: number) => {
+    const v = Math.max(200, Math.min(10000, Math.round(value) || 0))
+    if (viewbox[axis] === v) return
+    pushHistory()
+    setViewbox(prev => ({ ...prev, [axis]: v }))
+  }, [viewbox, pushHistory])
+
   // Stage transform — pan + zoom. stageRef lives inside BuilderCanvas.
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 })
   const [stageScale, setStageScale] = useState(1)
@@ -639,6 +650,33 @@ function BuilderInner() {
                 <X className="h-4 w-4" /> Clear background
               </button>
             )}
+          </div>
+
+          {/* Canvas viewport size — match the white area to the actual
+              venue shape. Larger canvas = more room to place sections;
+              the SVG/Konva renderer scales to fit on screen regardless. */}
+          <div className="mt-4 px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Canvas size
+          </div>
+          <div className="px-2 grid grid-cols-2 gap-2">
+            <Field label="Width">
+              <input
+                aria-label="Canvas width"
+                type="number" min={200} max={10000} step={50}
+                value={viewbox.width}
+                onChange={e => setViewboxDim("width", Number(e.target.value))}
+                className="w-full px-2 py-1 text-sm border rounded bg-background"
+              />
+            </Field>
+            <Field label="Height">
+              <input
+                aria-label="Canvas height"
+                type="number" min={200} max={10000} step={50}
+                value={viewbox.height}
+                onChange={e => setViewboxDim("height", Number(e.target.value))}
+                className="w-full px-2 py-1 text-sm border rounded bg-background"
+              />
+            </Field>
           </div>
 
           <div className="mt-4 px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
