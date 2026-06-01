@@ -777,8 +777,11 @@ function SectionInspector({
   onPatch: (patch: Partial<SectionSpec>) => void
   onRemove: () => void
 }) {
-  const [draftName, setDraftName] = useState(section.name)
-  useEffect(() => { setDraftName(section.name) }, [section.name])
+  // Draft is null while the user isn't actively editing — the displayed value
+  // falls through to `section.name`, so selecting a different section
+  // automatically refreshes the input without a useEffect sync.
+  const [draft, setDraft] = useState<string | null>(null)
+  const draftName = draft ?? section.name
   const seatCount = section.rows * section.cols - Object.keys(section.skipSeats).length
 
   return (
@@ -798,11 +801,15 @@ function SectionInspector({
         <input
           aria-label="Section name"
           value={draftName}
-          onChange={e => setDraftName(e.target.value)}
-          onBlur={() => { if (draftName.trim() && draftName !== section.name) onPatch({ name: draftName.trim() }) }}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={() => {
+            const trimmed = draftName.trim()
+            if (trimmed && trimmed !== section.name) onPatch({ name: trimmed })
+            setDraft(null)
+          }}
           onKeyDown={e => {
             if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur()
-            if (e.key === "Escape") setDraftName(section.name)
+            if (e.key === "Escape") setDraft(null)
           }}
           className="w-full px-2 py-1 text-sm border rounded bg-background"
         />

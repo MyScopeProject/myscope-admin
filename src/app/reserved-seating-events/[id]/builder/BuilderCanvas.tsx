@@ -355,7 +355,6 @@ export default function BuilderCanvas(props: Props) {
               {/* Derived seats. Skipped cells render as dim crosses so the
                   admin can re-toggle them; non-skip cells are full circles. */}
               {sectionSeats.map(s => {
-                const cellKey = `${s.r},${s.c}`
                 const isSeatSel = selection?.kind === "seat" && selection.derivedId === s.id
                 const localX = s.x - section.x
                 const localY = s.y - section.y
@@ -377,11 +376,10 @@ export default function BuilderCanvas(props: Props) {
                       e.cancelBubble = true
                       onToggleSkipSeat(section.id, s.r, s.c)
                     }}
-                    onTap={(e: Konva.KonvaEventObject<MouseEvent>) => {
+                    onTap={(e: Konva.KonvaEventObject<TouchEvent>) => {
                       e.cancelBubble = true
                       setSelection({ kind: "seat", derivedId: s.id })
                     }}
-                    _skipKey={cellKey}
                   />
                 )
               })}
