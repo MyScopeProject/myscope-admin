@@ -1,25 +1,24 @@
 "use client"
 
 /**
- * Visual canvas seat-map editor — P2 of the MyTickets-quality reserved-seating
- * rework. Per-seat (x, y) positioning on a Konva canvas, decor shapes for stage
- * / walls / labels, section + ticket-type assignment, saves via the new
- * POST /api/organizer/events/:id/seat-map endpoint.
+ * Reserved seating canvas builder — v2, structured-section model.
  *
- * MVP scope (this iteration):
- *   - Single canvas with pan + zoom (Konva Stage drag + wheel scaling)
- *   - "Add section" tool: name + rows + cols + spacing + ticket type → drops a
- *     grid of seats at top-left, admin drags individual seats to fit
- *   - "Add decor" tools: stage rectangle (rect+label), text label
- *   - Click selects (seat or decor); Delete / Backspace removes selected
- *   - Color-by-tier in the editor (matches the user-facing renderer's palette)
- *   - Save button validates + POSTs the payload
+ * Each section is a declarative grid block (`SectionSpec`) with rows × cols,
+ * spacing, default tier, per-cell tier overrides, and per-cell "skip" flags
+ * for irregular bottom edges. Individual seats are NEVER stored — they're
+ * derived from the section spec at render + save time.
  *
- * Not yet (worth adding later):
- *   - Multi-select drag (move a whole section as a group)
- *   - Background floor-plan image upload
- *   - Undo/redo
- *   - Rotation
+ * Row letters and seat numbers are derived globally from seat Y / X positions
+ * via `seatMapModel.deriveLabels`:
+ *   - Sections at the same row Y share a row letter (cross-section rows).
+ *   - Seats are numbered left-to-right across sections in the same row.
+ *   - A large Y-gap (>2.5× median row gap) starts a new zone with its own
+ *     label scheme (single letters → double → triple). Matches the
+ *     reference layout's A-U (top) / AA-MM (balcony) convention.
+ *
+ * On save we run derive → label → ship to the existing /seat-map endpoint
+ * (no API changes). On hydrate we reverse-engineer SectionSpec[] from the
+ * stored event_seats rows so re-edits don't start blank.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -41,7 +40,6 @@ import {
   ArrowLeft,
   Image as ImageIcon,
   LayoutGrid,
-  ListOrdered,
   Plus,
   Save,
   Square,
@@ -50,13 +48,18 @@ import {
   Undo2,
   X,
 } from "lucide-react"
-import type { EditorSeat, EditorDecor, Selection } from "./BuilderCanvas"
+import {
+  deriveSeats,
+  deriveLabels,
+  reverseEngineerSections,
+  type SectionSpec,
+} from "./seatMapModel"
+import type { EditorDecor, Selection } from "./BuilderCanvas"
 
-// react-konva uses the browser's window AND has a custom React reconciler
-// that needs its full subtree mounted synchronously. We dynamic-import the
-// whole canvas as one chunk (ssr:false) instead of dynamic-importing each
-// react-konva sub-component, which would leave the Stage with placeholder
-// children and render nothing until every import resolved.
+// react-konva needs the whole canvas subtree mounted atomically — dynamic-
+// importing each sub-component separately leaves the Stage with React
+// placeholders that Konva's reconciler can't resolve. One dynamic import of
+// the whole BuilderCanvas keeps it as a single client-only chunk.
 const BuilderCanvas = dynamic(() => import("./BuilderCanvas"), {
   ssr: false,
   loading: () => (
@@ -66,77 +69,21 @@ const BuilderCanvas = dynamic(() => import("./BuilderCanvas"), {
   ),
 })
 
-// Palette for ticket-type swatches. Indexed by tier position; auditoriums
-// rarely have >6 tiers so this comfortably covers them. Matches BUILDER_COLORS
-// from the existing grid builder for visual continuity.
+// Tier swatch palette — indexed by ticket-type position in `ticket_types`.
 const TIER_PALETTE = ["#7F77DD", "#1D9E75", "#BA7517", "#D85A30", "#185FA5", "#993556", "#6B7280"]
+function tierColor(tierIndex: number) {
+  return TIER_PALETTE[tierIndex % TIER_PALETTE.length] || TIER_PALETTE[0]
+}
 
 const DEFAULT_VIEWBOX = { width: 1600, height: 1200 }
-const DEFAULT_SEAT_SPACING = 22 // px between seats in generated rows
-
-// Spreadsheet-style row labels (A, B, …, Z, AA, AB, …) — used for zone 0.
-function rowLabelFromIndex(n: number): string {
-  let s = ""
-  let i = n + 1
-  while (i > 0) {
-    const r = (i - 1) % 26
-    s = String.fromCharCode(65 + r) + s
-    i = Math.floor((i - 1) / 26)
-  }
-  return s
-}
-
-// Row label for a given (zone, row-within-zone). The renumber action detects
-// zones by Y-gap and switches the labelling scheme so different physical
-// blocks (e.g. orchestra vs balcony) get visually distinct numbering — matches
-// the reference layout where the top block uses A-U and the balcony uses
-// AA-MM. Zone 0 = single letters (A, B, … Z, AA, AB, …); zone 1 = double
-// letters (AA, BB, CC, … ZZ); zone 2 = triple letters (AAA, BBB, …); etc.
-function rowLabelForZone(zoneIdx: number, rowIdx: number): string {
-  if (zoneIdx === 0) return rowLabelFromIndex(rowIdx)
-  const c = String.fromCharCode(65 + (rowIdx % 26))
-  return c.repeat(zoneIdx + 1)
-}
-
-// Increment a row label one step. Detects the "AA, BB, CC, …" balcony
-// convention (two identical characters) and increments the letter, e.g.
-// AA → BB. Otherwise falls back to spreadsheet-style (A→B, Z→AA, AA→AB).
-function nextRowLabel(label: string): string {
-  const up = label.toUpperCase()
-  if (up.length === 2 && up[0] === up[1] && up[0] >= "A" && up[0] <= "Y") {
-    const c = String.fromCharCode(up.charCodeAt(0) + 1)
-    return c + c
-  }
-  // Spreadsheet-style: parse base-26, +1, render back.
-  let n = 0
-  for (let i = 0; i < up.length; i++) {
-    const code = up.charCodeAt(i)
-    if (code < 65 || code > 90) return up // bail on non-letter input
-    n = n * 26 + (code - 64)
-  }
-  n += 1
-  let out = ""
-  while (n > 0) {
-    const r = (n - 1) % 26
-    out = String.fromCharCode(65 + r) + out
-    n = Math.floor((n - 1) / 26)
-  }
-  return out
-}
-
-// Editor state types live in BuilderCanvas.tsx since they're the input
-// contract for the renderer; re-imported above.
-
-// ----- Helpers -----------------------------------------------------------
+const DEFAULT_SEAT_SPACING = 22
 
 let _uidCounter = 0
 const uid = (prefix = "id") => `${prefix}_${Date.now().toString(36)}_${(++_uidCounter).toString(36)}`
 
-function tierColor(tierIndex: number) {
-  return TIER_PALETTE[tierIndex % TIER_PALETTE.length]
-}
-
-// ----- Component ---------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Page wrapper — auth + layout
+// ---------------------------------------------------------------------------
 
 export default function VisualSeatMapBuilderPage() {
   return (
@@ -158,42 +105,33 @@ function BuilderInner() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
-  // Canvas state
-  const [seats, setSeats] = useState<EditorSeat[]>([])
+  // Canvas state — sections + decor are the source of truth. Seats are
+  // derived for rendering and save; admin never edits a seat list directly.
+  const [sections, setSections] = useState<SectionSpec[]>([])
   const [decor, setDecor] = useState<EditorDecor[]>([])
   const [selection, setSelection] = useState<Selection>(null)
-  // Per-event viewport — defaulted from the loaded seat-map state so a
-  // previously-built map keeps its canvas dimensions and background image.
   const [viewbox, setViewbox] = useState<{ width: number; height: number }>(DEFAULT_VIEWBOX)
   const [backgroundUrl, setBackgroundUrl] = useState<string | null>(null)
-  // Seats the server reports as held/booked — saving would refuse, so we
-  // surface a banner instead of letting the admin discover it on submit.
   const [lockedSeats, setLockedSeats] = useState(0)
 
-  // Undo history — snapshot of (seats, decor) right BEFORE each mutation.
-  // Capped at 50 entries to bound memory; older snapshots roll off.
-  const [history, setHistory] = useState<Array<{ seats: EditorSeat[]; decor: EditorDecor[] }>>([])
-  // Dirty since last save/hydration. Drives the auto-save-on-back behaviour
-  // and (later) a "unsaved changes" indicator. Reset to false in save success
-  // and after the hydration effect finishes loading existing state.
+  // Undo history. One snapshot per user mutation — capped at 50.
+  const [history, setHistory] = useState<Array<{ sections: SectionSpec[]; decor: EditorDecor[] }>>([])
   const [dirty, setDirty] = useState(false)
 
-  // Snapshot (seats, decor) onto the undo stack. Called BEFORE each user
-  // mutation; on undo we pop the most recent snapshot back into place.
   const pushHistory = useCallback(() => {
     setHistory(h => {
       const next = h.length >= 50 ? h.slice(1) : h.slice()
-      next.push({ seats, decor })
+      next.push({ sections, decor })
       return next
     })
     setDirty(true)
-  }, [seats, decor])
+  }, [sections, decor])
 
   const undo = useCallback(() => {
     setHistory(h => {
       if (h.length === 0) return h
       const prev = h[h.length - 1]
-      setSeats(prev.seats)
+      setSections(prev.sections)
       setDecor(prev.decor)
       setSelection(null)
       return h.slice(0, -1)
@@ -203,11 +141,9 @@ function BuilderInner() {
   // Modals
   const [showAddSection, setShowAddSection] = useState(false)
 
-  // Background floor-plan upload state (kept separate from save so the
-  // background can be replaced without committing seats yet).
+  // Background upload
   const [bgUploading, setBgUploading] = useState(false)
   const bgFileInputRef = useRef<HTMLInputElement | null>(null)
-
   const uploadBackground = useCallback(async (file: File) => {
     setBgUploading(true)
     try {
@@ -226,30 +162,25 @@ function BuilderInner() {
       setBgUploading(false)
     }
   }, [pushHistory])
-
   const clearBackground = useCallback(() => {
     if (!backgroundUrl) return
     pushHistory()
     setBackgroundUrl(null)
   }, [backgroundUrl, pushHistory])
 
-  // Stage transform — pan + zoom. stageRef lives inside BuilderCanvas now.
+  // Stage transform — pan + zoom. stageRef lives inside BuilderCanvas.
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 })
   const [stageScale, setStageScale] = useState(1)
   const [stageSize, setStageSize] = useState({ width: 1200, height: 700 })
-
   const containerRef = useRef<HTMLDivElement | null>(null)
 
-  // ----- Load event + ticket types ----------------------------------------
+  // ----- Load event + ticket types + reverse-engineer sections ----------
 
   useEffect(() => {
     if (!eventId) return
     let cancelled = false
     ;(async () => {
       try {
-        // Three parallel calls — event meta + ticket types + existing seat-map
-        // state. The seat-map fetch tolerates a 404 (returns empty seats) so a
-        // brand-new event still opens a blank canvas instead of erroring.
         const [evRes, ttRes, smRes] = await Promise.all([
           reservedEventsAPI.list(),
           reservedEventsAPI.ticketTypes(eventId),
@@ -261,9 +192,6 @@ function BuilderInner() {
         setEvent(ev)
         setTicketTypes(ttRes.data?.data?.ticket_types || [])
 
-        // Hydrate canvas state from the server. We only restore seats that
-        // already have (x, y) — a grid-mode event whose seats are positionless
-        // would otherwise stack on top of each other at the origin.
         const sm = smRes?.data?.data
         if (sm) {
           if (sm.layout) {
@@ -287,17 +215,9 @@ function BuilderInner() {
               }))
             setDecor(decorHydrated)
           }
-          const positioned = (sm.seats || []).filter(s => s.x != null && s.y != null)
-          const seatsHydrated: EditorSeat[] = positioned.map(s => ({
-            id: uid("seat"),
-            section: s.section || "General",
-            row_label: s.row_label || "A",
-            seat_number: String(s.seat_number ?? ""),
-            x: Number(s.x),
-            y: Number(s.y),
-            ticket_type_id: s.ticket_type_id || "",
-          }))
-          setSeats(seatsHydrated)
+          // Reverse-engineer SectionSpec[] from the flat event_seats list.
+          const recovered = reverseEngineerSections(sm.seats || [], uid)
+          setSections(recovered)
           const locked = (sm.seats || []).filter(
             s => s.status === "held" || s.status === "booked",
           ).length
@@ -315,11 +235,8 @@ function BuilderInner() {
     return () => { cancelled = true }
   }, [eventId])
 
-  // Resize stage to fit container. ResizeObserver picks up the first layout
-  // tick after PageLoader→canvas swap, plus any subsequent panel resizes.
-  // (A plain "measure on mount" effect doesn't work: the container isn't in
-  // the DOM until `loading` flips false, so the initial measurement would
-  // miss and the Stage would be stuck at its 1200×700 default forever.)
+  // Stage size — measured once the canvas container is mounted (PageLoader
+  // swap pulls the container into the DOM, ResizeObserver picks up the rest).
   useEffect(() => {
     if (loading) return
     const el = containerRef.current
@@ -333,57 +250,56 @@ function BuilderInner() {
     const ro = new ResizeObserver(update)
     ro.observe(el)
     window.addEventListener("resize", update)
-    return () => {
-      ro.disconnect()
-      window.removeEventListener("resize", update)
-    }
+    return () => { ro.disconnect(); window.removeEventListener("resize", update) }
   }, [loading])
 
-  // removeSection is declared later (after addSection etc.) but the keyboard
-  // effect needs it now. A ref keeps the latest closure without dragging
-  // removeSection into the effect's deps, which would also force a TDZ here.
-  const removeSectionRef = useRef<((name: string) => void) | null>(null)
-
-  // Keyboard: Delete removes the selected item.
+  // Keyboard shortcuts. Delete on a section removes the section; on a decor
+  // it removes the decor; on a derived seat it toggles skip. Cmd/Ctrl+Z
+  // pops one history entry.
+  const removeSectionRef = useRef<((id: string) => void) | null>(null)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null
       const inField = !!(t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT"))
-
-      // Cmd/Ctrl+Z → undo. Cmd/Ctrl+Shift+Z is left alone (browser redo).
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
         if (inField) return
         e.preventDefault()
         undo()
         return
       }
-
       if (e.key !== "Delete" && e.key !== "Backspace") return
-      if (inField) return
-      if (!selection) return
+      if (inField || !selection) return
       e.preventDefault()
-      if (selection.kind === "seat") {
-        pushHistory()
-        setSeats(s => s.filter(x => x.id !== selection.id))
+      if (selection.kind === "section") {
+        removeSectionRef.current?.(selection.id)
+        return
       }
       if (selection.kind === "decor") {
         pushHistory()
         setDecor(d => d.filter(x => x.id !== selection.id))
+        setSelection(null)
       }
-      // For section selection the delete shortcut routes to removeSection
-      // (which already prompts + pushes history). Read via the ref so the
-      // effect doesn't depend on a not-yet-declared callback.
-      if (selection.kind === "section") {
-        removeSectionRef.current?.(selection.name)
-        return
+      if (selection.kind === "seat") {
+        // Parse "sectionId#r#c" and toggle skip.
+        const [sectionId, rStr, cStr] = selection.derivedId.split("#")
+        const r = Number(rStr); const c = Number(cStr)
+        if (!Number.isFinite(r) || !Number.isFinite(c)) return
+        pushHistory()
+        setSections(arr => arr.map(s => {
+          if (s.id !== sectionId) return s
+          const key = `${r},${c}`
+          const next = { ...s.skipSeats }
+          next[key] = true
+          return { ...s, skipSeats: next }
+        }))
+        setSelection(null)
       }
-      setSelection(null)
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [selection, undo, pushHistory])
 
-  // ----- Tools ------------------------------------------------------------
+  // ----- Section mutations ------------------------------------------------
 
   const addSection = useCallback((opts: {
     name: string
@@ -391,155 +307,109 @@ function BuilderInner() {
     cols: number
     spacing: number
     ticket_type_id: string
-    // Row label to start at — admin types a letter directly ("A", "AA", "F").
-    // We walk forward via nextRowLabel() for subsequent rows, which handles
-    // both spreadsheet-style (A→B→…→Z→AA) and double-letter balcony style
-    // (AA→BB→CC). Falls back to "A" if blank.
-    startRowLabel?: string
   }) => {
-    const { name, rows, cols, spacing, ticket_type_id, startRowLabel = "A" } = opts
-    // Drop at center of current viewport (in stage coords).
+    // Drop new section at the canvas viewport centre.
     const center = stageToCanvas({
       x: stageSize.width / 2,
       y: stageSize.height / 2,
     }, stagePos, stageScale)
-    const blockWidth  = (cols - 1) * spacing
-    const blockHeight = (rows - 1) * spacing
-    const originX = Math.round(center.x - blockWidth  / 2)
-    const originY = Math.round(center.y - blockHeight / 2)
-
-    const next: EditorSeat[] = []
-    let rowLabel = (startRowLabel || "A").toUpperCase().trim() || "A"
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        next.push({
-          id: uid("seat"),
-          section: name,
-          row_label: rowLabel,
-          seat_number: String(c + 1),
-          x: originX + c * spacing,
-          y: originY + r * spacing,
-          ticket_type_id,
-        })
-      }
-      rowLabel = nextRowLabel(rowLabel)
+    const blockWidth  = (opts.cols - 1) * opts.spacing
+    const blockHeight = (opts.rows - 1) * opts.spacing
+    const spec: SectionSpec = {
+      id: uid("section"),
+      name: opts.name,
+      x: Math.round(center.x - blockWidth  / 2),
+      y: Math.round(center.y - blockHeight / 2),
+      rows: opts.rows,
+      cols: opts.cols,
+      rowSpacing: opts.spacing,
+      seatSpacing: opts.spacing,
+      defaultTicketTypeId: opts.ticket_type_id,
+      tierOverrides: {},
+      skipSeats: {},
     }
     pushHistory()
-    setSeats(prev => [...prev, ...next])
-    toast.success(`Added section "${name}" (${next.length} seats)`)
+    setSections(prev => [...prev, spec])
+    toast.success(`Added section "${opts.name}" (${opts.rows * opts.cols} seats)`)
   }, [stagePos, stageScale, stageSize, pushHistory])
 
-  // Bake a section drag's delta into each seat's absolute (x, y) and push
-  // one undo entry for the whole move.
-  const moveSection = useCallback((sectionName: string, dx: number, dy: number) => {
+  const moveSection = useCallback((sectionId: string, dx: number, dy: number) => {
     if (dx === 0 && dy === 0) return
     pushHistory()
-    setSeats(arr => arr.map(s =>
-      s.section === sectionName
+    setSections(arr => arr.map(s =>
+      s.id === sectionId
         ? { ...s, x: Math.round(s.x + dx), y: Math.round(s.y + dy) }
         : s))
   }, [pushHistory])
 
-  // Bake a section resize into each seat's absolute (x, y). The Konva
-  // Transformer reports translation (tx, ty) and scale (sx, sy) at the end
-  // of the gesture — each seat's new position is `(tx + x*sx, ty + y*sy)`,
-  // which mirrors what the user saw visually before transformend reset the
-  // group's transform.
+  // Section resize via Konva Transformer scales the row + seat spacing
+  // (rows/cols unchanged). Translation is baked into x/y.
   const resizeSection = useCallback((
-    sectionName: string,
-    tx: number, ty: number,
+    sectionId: string,
+    nx: number, ny: number,
     sx: number, sy: number,
   ) => {
     pushHistory()
-    setSeats(arr => arr.map(s => {
-      if (s.section !== sectionName) return s
+    setSections(arr => arr.map(s => {
+      if (s.id !== sectionId) return s
       return {
         ...s,
-        x: Math.round(tx + s.x * sx),
-        y: Math.round(ty + s.y * sy),
+        x: Math.round(nx),
+        y: Math.round(ny),
+        rowSpacing:  Math.max(6, Math.round(s.rowSpacing  * sy)),
+        seatSpacing: Math.max(6, Math.round(s.seatSpacing * sx)),
       }
     }))
   }, [pushHistory])
 
-  // Drag handlers — each wraps a single history snapshot so undo backs out
-  // one move at a time. Called from BuilderCanvas.
-  const handleSeatMove = useCallback((seatId: string, x: number, y: number) => {
-    pushHistory()
-    setSeats(arr => arr.map(s => s.id === seatId ? { ...s, x, y } : s))
-  }, [pushHistory])
-
-  const handleDecorMove = useCallback((decorId: string, x: number, y: number) => {
-    pushHistory()
-    setDecor(arr => arr.map(d => d.id === decorId ? { ...d, x, y } : d))
-  }, [pushHistory])
-
-  // Remove every seat that belongs to a section. Called from the Section
-  // Summary trash icon; clears any selection that referenced that section.
-  const removeSection: (sectionName: string) => void = useCallback((sectionName: string) => {
-    const count = seats.filter(s => s.section === sectionName).length
-    if (count === 0) return
+  const removeSection: (id: string) => void = useCallback((sectionId: string) => {
+    const target = sections.find(s => s.id === sectionId)
+    if (!target) return
+    const seatCount = target.rows * target.cols - Object.keys(target.skipSeats).length
     const ok = typeof window === "undefined"
       ? true
-      : window.confirm(`Remove section "${sectionName}" (${count} seat${count === 1 ? "" : "s"})?`)
+      : window.confirm(`Remove section "${target.name}" (${seatCount} seat${seatCount === 1 ? "" : "s"})?`)
     if (!ok) return
     pushHistory()
-    setSeats(arr => arr.filter(s => s.section !== sectionName))
-    setSelection(sel => (sel?.kind === "section" && sel.name === sectionName) ? null : sel)
-    toast.success(`Removed section "${sectionName}"`)
-  }, [seats, pushHistory])
-
-  // Keep the keyboard-handler ref pointing at the freshest removeSection so
-  // pressing Delete on a selected section deletes it via the same prompt.
+    setSections(arr => arr.filter(s => s.id !== sectionId))
+    setSelection(sel => (sel?.kind === "section" && sel.id === sectionId) ? null : sel)
+    toast.success(`Removed section "${target.name}"`)
+  }, [sections, pushHistory])
   useEffect(() => { removeSectionRef.current = removeSection }, [removeSection])
 
-  // Renumber rows + seat numbers based on visual position. Buckets seats
-  // by Y (so multiple sections at the same row share a row letter), assigns
-  // row letters top-to-bottom, then sorts each bucket left-to-right and
-  // assigns seat numbers 1..N — including seats from different sections
-  // that happen to share the row. Mirrors the reference seating diagram
-  // where, e.g., row A spans the left, center, and right blocks.
-  const renumberRows = useCallback(() => {
-    if (seats.length === 0) return
-    // Sort by Y to walk top-to-bottom.
-    const sorted = [...seats].sort((a, b) => a.y - b.y)
-    // Estimate row tolerance from typical vertical spacing — half the median
-    // y-gap between consecutive seats. Falls back to 12px for tiny maps.
-    const yDiffs: number[] = []
-    for (let i = 1; i < sorted.length; i++) {
-      const d = sorted[i].y - sorted[i - 1].y
-      if (d > 0.5) yDiffs.push(d)
-    }
-    yDiffs.sort((a, b) => a - b)
-    const medianDiff = yDiffs[Math.floor(yDiffs.length / 2)] || 22
-    const tolerance = Math.max(6, medianDiff * 0.6)
-    // Build buckets by adjacency — a new bucket starts when the gap to the
-    // previous seat exceeds `tolerance`.
-    const buckets: EditorSeat[][] = []
-    let lastY = -Infinity
-    for (const s of sorted) {
-      if (s.y - lastY > tolerance || buckets.length === 0) buckets.push([])
-      buckets[buckets.length - 1].push(s)
-      lastY = s.y
-    }
-    // Assign row labels + seat numbers. Within a bucket, sort by X so
-    // numbering reads left → right across whatever section the seats
-    // belong to. We DON'T touch the seats' `section` field — color/group
-    // ownership is independent of the row/number scheme.
-    const updates = new Map<string, { row_label: string; seat_number: string }>()
-    buckets.forEach((bucket, i) => {
-      const rowLabel = rowLabelFromIndex(i)
-      bucket.sort((a, b) => a.x - b.x)
-      bucket.forEach((seat, idx) => {
-        updates.set(seat.id, { row_label: rowLabel, seat_number: String(idx + 1) })
-      })
-    })
+  const updateSection = useCallback((sectionId: string, patch: Partial<SectionSpec>) => {
     pushHistory()
-    setSeats(arr => arr.map(s => {
-      const u = updates.get(s.id)
-      return u ? { ...s, ...u } : s
+    setSections(arr => arr.map(s => s.id === sectionId ? { ...s, ...patch } : s))
+  }, [pushHistory])
+
+  // Toggle a cell's "skip" flag. Double-clicked on canvas or via Delete on
+  // a selected seat cell — useful for carving irregular bottom edges.
+  const toggleSkipSeat = useCallback((sectionId: string, r: number, c: number) => {
+    pushHistory()
+    setSections(arr => arr.map(s => {
+      if (s.id !== sectionId) return s
+      const key = `${r},${c}`
+      const next = { ...s.skipSeats }
+      if (next[key]) delete next[key]
+      else next[key] = true
+      return { ...s, skipSeats: next }
     }))
-    toast.success(`Renumbered ${buckets.length} row${buckets.length === 1 ? "" : "s"}`)
-  }, [seats, pushHistory])
+  }, [pushHistory])
+
+  // Override a cell's ticket tier. `tierId` = "" means clear the override.
+  const setCellTier = useCallback((sectionId: string, r: number, c: number, tierId: string) => {
+    pushHistory()
+    setSections(arr => arr.map(s => {
+      if (s.id !== sectionId) return s
+      const key = `${r},${c}`
+      const next = { ...s.tierOverrides }
+      if (!tierId || tierId === s.defaultTicketTypeId) delete next[key]
+      else next[key] = tierId
+      return { ...s, tierOverrides: next }
+    }))
+  }, [pushHistory])
+
+  // ----- Decor mutations --------------------------------------------------
 
   const addDecor = useCallback((kind: "rect" | "text", label = "") => {
     const center = stageToCanvas({
@@ -567,23 +437,29 @@ function BuilderInner() {
     setSelection({ kind: "decor", id })
   }, [stagePos, stageScale, stageSize, pushHistory])
 
-  // Wheel-zoom + drag-pan are owned by BuilderCanvas (it has access to the
-  // Konva stage ref). The page only stores the resulting pos / scale.
+  const handleDecorMove = useCallback((decorId: string, x: number, y: number) => {
+    pushHistory()
+    setDecor(arr => arr.map(d => d.id === decorId ? { ...d, x, y } : d))
+  }, [pushHistory])
 
   // ----- Save -------------------------------------------------------------
 
   const save = useCallback(async () => {
     if (!eventId || !event) return
-    if (seats.length === 0) {
+    // Derive seats + labels right before save so the API receives a flat
+    // event_seats payload with row_label and seat_number computed from the
+    // current visual positions.
+    const derived = deriveSeats(sections)
+    if (derived.length === 0) {
       toast.error("Add at least one section before saving.")
       return
     }
-    // Validate: every seat has a ticket_type
-    const orphans = seats.filter(s => !s.ticket_type_id)
+    const orphans = derived.filter(s => !s.ticketTypeId)
     if (orphans.length > 0) {
       toast.error(`${orphans.length} seat(s) have no ticket type assigned.`)
       return
     }
+    const labels = deriveLabels(derived)
     setSaving(true)
     try {
       const payload: VisualSeatMapPayload = {
@@ -591,47 +467,44 @@ function BuilderInner() {
         viewbox_height: viewbox.height,
         background_image_url: backgroundUrl,
         decor: decor.map<VisualSeatMapDecor>(d => ({
-          id: d.id,
-          kind: d.kind,
-          x: d.x,
-          y: d.y,
-          width: d.width,
-          height: d.height,
-          label: d.label,
-          fill: d.fill,
-          color: d.color,
+          id: d.id, kind: d.kind,
+          x: d.x, y: d.y,
+          width: d.width, height: d.height,
+          label: d.label, fill: d.fill, color: d.color,
         })),
-        seats: seats.map<VisualSeatMapSeat>(s => ({
-          section: s.section,
-          row_label: s.row_label,
-          seat_number: s.seat_number,
-          seat_label: `${s.row_label}-${s.seat_number}`,
-          x: s.x,
-          y: s.y,
-          ticket_type_id: s.ticket_type_id,
-          seat_type: "standard",
-        })),
+        seats: derived.map<VisualSeatMapSeat>(s => {
+          const lab = labels[s.id]
+          return {
+            section: s.sectionName,
+            row_label: lab?.row_label || "?",
+            seat_number: lab?.seat_number || "?",
+            seat_label: `${lab?.row_label || "?"}-${lab?.seat_number || "?"}`,
+            x: s.x,
+            y: s.y,
+            ticket_type_id: s.ticketTypeId,
+            seat_type: "standard",
+          }
+        }),
       }
       const res = await reservedEventsAPI.buildSeatMap(eventId, payload)
       const out = res?.data?.data
-      toast.success(`Saved (${out?.seats_created ?? seats.length} seats)`)
+      toast.success(`Saved (${out?.seats_created ?? derived.length} seats)`)
       setDirty(false)
       setHistory([])
       router.push("/reserved-seating-events")
-    } catch (err: any) {
-      const msg = err?.response?.data?.message || err?.message || "Save failed"
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } }, message?: string })?.response?.data?.message
+        || (err as Error)?.message
+        || "Save failed"
       toast.error(msg)
     } finally {
       setSaving(false)
     }
-  }, [eventId, event, seats, decor, viewbox, backgroundUrl, router])
+  }, [eventId, event, sections, decor, viewbox, backgroundUrl, router])
 
-  // Back-button handler — auto-save if there are unsaved changes, otherwise
-  // navigate straight away. Save() already navigates on success, so for the
-  // dirty path we just call it.
   const goBack = useCallback(() => {
     const targetUrl = "/reserved-seating-events"
-    if (!dirty || seats.length === 0) {
+    if (!dirty || sections.length === 0) {
       router.push(targetUrl)
       return
     }
@@ -642,11 +515,8 @@ function BuilderInner() {
       if (ok) router.push(targetUrl)
       return
     }
-    // Save will toast on error and stay on this page; on success it pushes
-    // to the list. setDirty(false) inside save() prevents a double-prompt
-    // from any subsequent navigation.
     save()
-  }, [dirty, seats.length, lockedSeats, router, save])
+  }, [dirty, sections.length, lockedSeats, router, save])
 
   // ----- Render -----------------------------------------------------------
 
@@ -654,6 +524,10 @@ function BuilderInner() {
   if (!event)  return <div className="p-8 text-center text-muted-foreground">Event not found.</div>
 
   const tierIndexById = (id: string) => ticketTypes.findIndex(t => t.id === id)
+  const totalSeats = sections.reduce(
+    (sum, s) => sum + (s.rows * s.cols - Object.keys(s.skipSeats).length),
+    0,
+  )
 
   return (
     <div className="flex flex-col h-[calc(100vh-80px)]">
@@ -666,7 +540,7 @@ function BuilderInner() {
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
-          {dirty && seats.length > 0 ? "Save & back" : "Back"}
+          {dirty && sections.length > 0 ? "Save & back" : "Back"}
         </button>
         <div className="h-5 w-px bg-border" />
         <div className="flex-1 min-w-0">
@@ -675,7 +549,7 @@ function BuilderInner() {
             {dirty && <span className="shrink-0 text-[10px] uppercase tracking-wider text-amber-600 dark:text-amber-400">Unsaved</span>}
           </div>
           <div className="text-xs text-muted-foreground truncate">
-            {event.venue_name ?? "Venue TBA"} · {seats.length} seat{seats.length === 1 ? "" : "s"} · {decor.length} decor item{decor.length === 1 ? "" : "s"}
+            {event.venue_name ?? "Venue TBA"} · {sections.length} section{sections.length === 1 ? "" : "s"} · {totalSeats} seat{totalSeats === 1 ? "" : "s"} · {decor.length} decor item{decor.length === 1 ? "" : "s"}
           </div>
         </div>
         {lockedSeats > 0 && (
@@ -698,7 +572,7 @@ function BuilderInner() {
         <button
           type="button"
           onClick={save}
-          disabled={saving || seats.length === 0 || lockedSeats > 0}
+          disabled={saving || sections.length === 0 || lockedSeats > 0}
           className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
         >
           <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save seat map"}
@@ -708,38 +582,29 @@ function BuilderInner() {
       {/* Body — toolbar | canvas | inspector */}
       <div className="flex-1 flex min-h-0">
         {/* Toolbar */}
-        <aside className="w-56 border-r bg-muted/30 flex flex-col gap-1 p-2 text-sm">
+        <aside className="w-56 border-r bg-muted/30 flex flex-col gap-1 p-2 text-sm overflow-y-auto">
           <button
+            type="button"
             onClick={() => setShowAddSection(true)}
             className="inline-flex items-center gap-2 rounded px-3 py-2 hover:bg-accent text-left"
           >
             <LayoutGrid className="h-4 w-4" /> Add section
           </button>
           <button
+            type="button"
             onClick={() => addDecor("rect", "STAGE")}
             className="inline-flex items-center gap-2 rounded px-3 py-2 hover:bg-accent text-left"
           >
             <Square className="h-4 w-4" /> Add stage / decor rect
           </button>
           <button
+            type="button"
             onClick={() => addDecor("text", "Label")}
             className="inline-flex items-center gap-2 rounded px-3 py-2 hover:bg-accent text-left"
           >
             <TypeIcon className="h-4 w-4" /> Add text label
           </button>
-          <button
-            type="button"
-            onClick={renumberRows}
-            disabled={seats.length === 0}
-            title="Re-letter rows and renumber seats by visual position — useful after placing multiple sections in the same row."
-            className="inline-flex items-center gap-2 rounded px-3 py-2 hover:bg-accent text-left disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <ListOrdered className="h-4 w-4" /> Renumber rows
-          </button>
 
-          {/* Background floor-plan upload — the admin uploads the venue's
-              hand-drawn diagram so they can resize sections on top of it.
-              Stored on venue_layouts.background_image_url after save. */}
           <div className="mt-4 px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Background
           </div>
@@ -753,7 +618,6 @@ function BuilderInner() {
               onChange={e => {
                 const f = e.target.files?.[0]
                 if (f) uploadBackground(f)
-                // Reset so re-selecting the same file fires onChange again.
                 if (e.target) e.target.value = ""
               }}
             />
@@ -787,23 +651,29 @@ function BuilderInner() {
               </div>
             ) : ticketTypes.map((tt, i) => (
               <div key={tt.id} className="flex items-center gap-2 text-xs px-1 py-1">
-                <span className="inline-block w-3 h-3 rounded-full" style={{ background: tierColor(i) }} />
+                <span
+                  aria-hidden="true"
+                  className="inline-block w-3 h-3 rounded-full shrink-0"
+                  style={{ background: tierColor(i) }}
+                />
                 <span className="flex-1 truncate">{tt.name}</span>
                 <span className="text-muted-foreground">{Number(tt.price).toLocaleString()}</span>
               </div>
             ))}
           </div>
 
-          <div className="mt-auto px-3 py-2 text-[11px] text-muted-foreground border-t border-border/50">
-            Scroll: zoom · Drag empty: pan · Click seat: select · Delete: remove
+          <div className="mt-auto px-3 py-2 text-[11px] text-muted-foreground border-t border-border/50 space-y-0.5">
+            <div>Scroll: zoom · Drag empty: pan</div>
+            <div>Click section: select + drag · Click seat: select</div>
+            <div>Double-click seat: skip / unskip</div>
+            <div>Ctrl/Cmd+Z: undo</div>
           </div>
         </aside>
 
         {/* Canvas */}
         <div
           ref={containerRef}
-          className="flex-1 relative bg-[radial-gradient(circle_at_1px_1px,_rgba(0,0,0,0.06)_1px,_transparent_0)]"
-          style={{ backgroundSize: "20px 20px" }}
+          className="flex-1 relative bg-[radial-gradient(circle_at_1px_1px,_rgba(0,0,0,0.06)_1px,_transparent_0)] [background-size:20px_20px]"
         >
           <BuilderCanvas
             viewbox={viewbox}
@@ -812,20 +682,20 @@ function BuilderInner() {
             stageScale={stageScale}
             setStagePos={setStagePos}
             setStageScale={setStageScale}
-            seats={seats}
+            sections={sections}
             decor={decor}
             backgroundUrl={backgroundUrl}
             selection={selection}
             setSelection={setSelection}
             seatColor={(id) => tierColor(tierIndexById(id))}
-            onSeatMove={handleSeatMove}
-            onDecorMove={handleDecorMove}
             onSectionMove={moveSection}
             onSectionResize={resizeSection}
+            onDecorMove={handleDecorMove}
+            onToggleSkipSeat={toggleSkipSeat}
           />
 
-          {/* Stage transform reset button */}
           <button
+            type="button"
             onClick={() => { setStagePos({ x: 0, y: 0 }); setStageScale(1) }}
             className="absolute bottom-3 left-3 rounded-md bg-background border px-2.5 py-1 text-xs shadow-sm hover:bg-accent"
           >
@@ -834,20 +704,13 @@ function BuilderInner() {
         </div>
 
         {/* Inspector */}
-        <aside className="w-72 border-l bg-muted/30 flex flex-col">
-          {selection?.kind === "seat" ? (
-            <SeatInspector
-              seat={seats.find(s => s.id === selection.id)!}
+        <aside className="w-72 border-l bg-muted/30 flex flex-col overflow-y-auto">
+          {selection?.kind === "section" ? (
+            <SectionInspector
+              section={sections.find(s => s.id === selection.id)!}
               ticketTypes={ticketTypes}
-              onChange={patch => {
-                pushHistory()
-                setSeats(arr => arr.map(s => s.id === selection.id ? { ...s, ...patch } : s))
-              }}
-              onDelete={() => {
-                pushHistory()
-                setSeats(arr => arr.filter(s => s.id !== selection.id))
-                setSelection(null)
-              }}
+              onPatch={(patch) => updateSection(selection.id, patch)}
+              onRemove={() => removeSection(selection.id)}
             />
           ) : selection?.kind === "decor" ? (
             <DecorInspector
@@ -862,42 +725,28 @@ function BuilderInner() {
                 setSelection(null)
               }}
             />
-          ) : selection?.kind === "section" ? (
-            <SectionInspector
-              sectionName={selection.name}
-              seats={seats}
+          ) : selection?.kind === "seat" ? (
+            <SeatCellInspector
+              derivedId={selection.derivedId}
+              sections={sections}
               ticketTypes={ticketTypes}
-              onRename={(newName) => {
-                if (!newName.trim() || newName === selection.name) return
-                if (seats.some(s => s.section === newName)) {
-                  toast.error(`A section named "${newName}" already exists.`)
-                  return
-                }
-                pushHistory()
-                setSeats(arr => arr.map(s => s.section === selection.name ? { ...s, section: newName } : s))
-                setSelection({ kind: "section", name: newName })
-              }}
-              onBulkTier={(ticketTypeId) => {
-                pushHistory()
-                setSeats(arr => arr.map(s => s.section === selection.name ? { ...s, ticket_type_id: ticketTypeId } : s))
-              }}
-              onRemove={() => removeSection(selection.name)}
+              onToggleSkip={(sid, r, c) => toggleSkipSeat(sid, r, c)}
+              onSetTier={(sid, r, c, tier) => setCellTier(sid, r, c, tier)}
             />
           ) : (
             <div className="p-4 text-sm text-muted-foreground">
-              Click a seat, section, or decor item to edit it.
+              Click a section, seat, or decor item to edit it.
             </div>
           )}
 
-          {/* Section summary */}
           <div className="mt-auto border-t p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
               Sections in this map
             </div>
             <SectionSummary
-              seats={seats}
+              sections={sections}
               ticketTypes={ticketTypes}
-              onSelect={(name) => setSelection({ kind: "section", name })}
+              onSelect={(id) => setSelection({ kind: "section", id })}
               onRemove={removeSection}
             />
           </div>
@@ -907,7 +756,7 @@ function BuilderInner() {
       {showAddSection && (
         <AddSectionModal
           ticketTypes={ticketTypes}
-          existingSections={[...new Set(seats.map(s => s.section))]}
+          existingNames={sections.map(s => s.name)}
           onCancel={() => setShowAddSection(false)}
           onSubmit={opts => { setShowAddSection(false); addSection(opts) }}
         />
@@ -920,204 +769,17 @@ function BuilderInner() {
 // Inspector panels
 // ---------------------------------------------------------------------------
 
-function SeatInspector({
-  seat, ticketTypes, onChange, onDelete,
-}: {
-  seat: EditorSeat
-  ticketTypes: ReservedEventTicketType[]
-  onChange: (patch: Partial<EditorSeat>) => void
-  onDelete: () => void
-}) {
-  return (
-    <div className="p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Seat</h3>
-        <button onClick={onDelete} className="text-destructive hover:bg-destructive/10 rounded p-1.5">
-          <Trash2 className="h-4 w-4" />
-        </button>
-      </div>
-      <Field label="Section">
-        <input
-          value={seat.section}
-          onChange={e => onChange({ section: e.target.value })}
-          className="w-full px-2 py-1 text-sm border rounded bg-background"
-        />
-      </Field>
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="Row">
-          <input
-            value={seat.row_label}
-            onChange={e => onChange({ row_label: e.target.value.toUpperCase() })}
-            className="w-full px-2 py-1 text-sm border rounded bg-background"
-          />
-        </Field>
-        <Field label="Number">
-          <input
-            value={seat.seat_number}
-            onChange={e => onChange({ seat_number: e.target.value })}
-            className="w-full px-2 py-1 text-sm border rounded bg-background"
-          />
-        </Field>
-      </div>
-      <Field label="Ticket type">
-        <select
-          value={seat.ticket_type_id}
-          onChange={e => onChange({ ticket_type_id: e.target.value })}
-          className="w-full px-2 py-1 text-sm border rounded bg-background"
-        >
-          {ticketTypes.map(tt => (
-            <option key={tt.id} value={tt.id}>
-              {tt.name} — {Number(tt.price).toLocaleString()}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="X"><span className="text-xs px-2 py-1 bg-background rounded inline-block">{seat.x}</span></Field>
-        <Field label="Y"><span className="text-xs px-2 py-1 bg-background rounded inline-block">{seat.y}</span></Field>
-      </div>
-    </div>
-  )
-}
-
-function DecorInspector({
-  decor, onChange, onDelete,
-}: {
-  decor: EditorDecor
-  onChange: (patch: Partial<EditorDecor>) => void
-  onDelete: () => void
-}) {
-  return (
-    <div className="p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">{decor.kind === "rect" ? "Stage / Rect" : "Text label"}</h3>
-        <button onClick={onDelete} className="text-destructive hover:bg-destructive/10 rounded p-1.5">
-          <Trash2 className="h-4 w-4" />
-        </button>
-      </div>
-      <Field label="Label">
-        <input
-          value={decor.label ?? ""}
-          onChange={e => onChange({ label: e.target.value })}
-          className="w-full px-2 py-1 text-sm border rounded bg-background"
-        />
-      </Field>
-      {decor.kind === "rect" && (
-        <div className="grid grid-cols-2 gap-2">
-          <Field label="Width">
-            <input
-              type="number"
-              value={decor.width ?? 200}
-              onChange={e => onChange({ width: Math.max(20, Number(e.target.value)) })}
-              className="w-full px-2 py-1 text-sm border rounded bg-background"
-            />
-          </Field>
-          <Field label="Height">
-            <input
-              type="number"
-              value={decor.height ?? 60}
-              onChange={e => onChange({ height: Math.max(20, Number(e.target.value)) })}
-              className="w-full px-2 py-1 text-sm border rounded bg-background"
-            />
-          </Field>
-        </div>
-      )}
-      <Field label="Fill">
-        <input
-          type="color"
-          value={decor.fill ?? "#111827"}
-          onChange={e => onChange({ fill: e.target.value })}
-          className="w-full h-8 rounded border"
-        />
-      </Field>
-      <Field label="Text color">
-        <input
-          type="color"
-          value={decor.color ?? "#FFFFFF"}
-          onChange={e => onChange({ color: e.target.value })}
-          className="w-full h-8 rounded border"
-        />
-      </Field>
-    </div>
-  )
-}
-
-function SectionSummary({
-  seats, ticketTypes, onSelect, onRemove,
-}: {
-  seats: EditorSeat[]
-  ticketTypes: ReservedEventTicketType[]
-  onSelect: (name: string) => void
-  onRemove: (name: string) => void
-}) {
-  const summary = useMemo(() => {
-    const map = new Map<string, { count: number; tierName: string; tierIdx: number }>()
-    for (const s of seats) {
-      const idx = ticketTypes.findIndex(t => t.id === s.ticket_type_id)
-      const tierName = idx >= 0 ? ticketTypes[idx].name : "—"
-      const cur = map.get(s.section)
-      if (cur) cur.count += 1
-      else map.set(s.section, { count: 1, tierName, tierIdx: idx })
-    }
-    return Array.from(map.entries()).map(([name, info]) => ({ name, ...info }))
-  }, [seats, ticketTypes])
-  if (summary.length === 0) {
-    return <div className="text-xs text-muted-foreground">No sections yet.</div>
-  }
-  return (
-    <ul className="space-y-1 text-xs">
-      {summary.map(s => (
-        <li key={s.name} className="group flex items-center gap-2 rounded px-1 py-0.5 hover:bg-accent">
-          <span
-            className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
-            style={{ background: tierColor(s.tierIdx) }}
-          />
-          <button
-            type="button"
-            onClick={() => onSelect(s.name)}
-            title="Select section"
-            className="flex-1 min-w-0 text-left truncate"
-          >
-            {s.name}
-          </button>
-          <span className="text-muted-foreground tabular-nums">{s.count}</span>
-          <button
-            type="button"
-            onClick={() => onRemove(s.name)}
-            title="Remove section"
-            className="opacity-0 group-hover:opacity-100 text-destructive hover:bg-destructive/10 rounded p-1 transition-opacity"
-          >
-            <Trash2 className="h-3 w-3" />
-          </button>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// SectionInspector — appears when a whole section is selected (clicked on its
-// bbox or label on the canvas). Lets the admin rename the section, bulk-assign
-// a different ticket tier to every seat, or remove the whole thing.
-// ---------------------------------------------------------------------------
 function SectionInspector({
-  sectionName, seats, ticketTypes, onRename, onBulkTier, onRemove,
+  section, ticketTypes, onPatch, onRemove,
 }: {
-  sectionName: string
-  seats: EditorSeat[]
+  section: SectionSpec
   ticketTypes: ReservedEventTicketType[]
-  onRename: (newName: string) => void
-  onBulkTier: (ticketTypeId: string) => void
+  onPatch: (patch: Partial<SectionSpec>) => void
   onRemove: () => void
 }) {
-  const sectionSeats = seats.filter(s => s.section === sectionName)
-  // Mixed-tier sections show "—" so onBulkTier doesn't silently overwrite.
-  const tierIds = new Set(sectionSeats.map(s => s.ticket_type_id))
-  const currentTier = tierIds.size === 1 ? [...tierIds][0] : ""
-  // Local-edited name so the user can type without each keystroke pushing
-  // history. Commit happens on Enter or blur.
-  const [draftName, setDraftName] = useState(sectionName)
-  useEffect(() => { setDraftName(sectionName) }, [sectionName])
+  const [draftName, setDraftName] = useState(section.name)
+  useEffect(() => { setDraftName(section.name) }, [section.name])
+  const seatCount = section.rows * section.cols - Object.keys(section.skipSeats).length
 
   return (
     <div className="p-4 space-y-3">
@@ -1134,39 +796,251 @@ function SectionInspector({
       </div>
       <Field label="Name">
         <input
+          aria-label="Section name"
           value={draftName}
           onChange={e => setDraftName(e.target.value)}
-          onBlur={() => onRename(draftName.trim())}
+          onBlur={() => { if (draftName.trim() && draftName !== section.name) onPatch({ name: draftName.trim() }) }}
           onKeyDown={e => {
             if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur()
-            if (e.key === "Escape") setDraftName(sectionName)
+            if (e.key === "Escape") setDraftName(section.name)
           }}
           className="w-full px-2 py-1 text-sm border rounded bg-background"
         />
       </Field>
-      <div className="text-xs text-muted-foreground">
-        {sectionSeats.length} seat{sectionSeats.length === 1 ? "" : "s"}
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Rows">
+          <input
+            aria-label="Section rows"
+            type="number" min={1} max={200}
+            value={section.rows}
+            onChange={e => onPatch({ rows: Math.max(1, Number(e.target.value) || 1) })}
+            className="w-full px-2 py-1 text-sm border rounded bg-background"
+          />
+        </Field>
+        <Field label="Cols">
+          <input
+            aria-label="Section cols"
+            type="number" min={1} max={200}
+            value={section.cols}
+            onChange={e => onPatch({ cols: Math.max(1, Number(e.target.value) || 1) })}
+            className="w-full px-2 py-1 text-sm border rounded bg-background"
+          />
+        </Field>
       </div>
-      <Field label={tierIds.size > 1 ? "Bulk ticket type (mixed)" : "Ticket type"}>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Row spacing">
+          <input
+            aria-label="Row spacing"
+            type="number" min={6}
+            value={section.rowSpacing}
+            onChange={e => onPatch({ rowSpacing: Math.max(6, Number(e.target.value) || 6) })}
+            className="w-full px-2 py-1 text-sm border rounded bg-background"
+          />
+        </Field>
+        <Field label="Seat spacing">
+          <input
+            aria-label="Seat spacing"
+            type="number" min={6}
+            value={section.seatSpacing}
+            onChange={e => onPatch({ seatSpacing: Math.max(6, Number(e.target.value) || 6) })}
+            className="w-full px-2 py-1 text-sm border rounded bg-background"
+          />
+        </Field>
+      </div>
+      <Field label="Default ticket type">
         <select
-          aria-label="Section ticket type"
-          value={currentTier}
-          onChange={e => onBulkTier(e.target.value)}
+          aria-label="Default ticket type"
+          value={section.defaultTicketTypeId}
+          onChange={e => onPatch({ defaultTicketTypeId: e.target.value })}
           className="w-full px-2 py-1 text-sm border rounded bg-background"
         >
-          {tierIds.size > 1 && <option value="" disabled>— mixed —</option>}
           {ticketTypes.map(tt => (
-            <option key={tt.id} value={tt.id}>
-              {tt.name} — {Number(tt.price).toLocaleString()}
-            </option>
+            <option key={tt.id} value={tt.id}>{tt.name} — {Number(tt.price).toLocaleString()}</option>
           ))}
         </select>
       </Field>
+      <div className="text-xs text-muted-foreground">
+        {seatCount} seat{seatCount === 1 ? "" : "s"} · {Object.keys(section.skipSeats).length} skipped · {Object.keys(section.tierOverrides).length} tier override{Object.keys(section.tierOverrides).length === 1 ? "" : "s"}
+      </div>
       <p className="text-[11px] text-muted-foreground">
-        Drag the section&rsquo;s outline (the empty space inside its bounds) to move
-        every seat together. Individual seats can still be nudged one at a time.
+        Drag the section&rsquo;s outline to move it. Drag a corner handle to
+        scale spacing. Double-click an individual seat on the canvas to skip
+        / unskip it.
       </p>
     </div>
+  )
+}
+
+function SeatCellInspector({
+  derivedId, sections, ticketTypes, onToggleSkip, onSetTier,
+}: {
+  derivedId: string
+  sections: SectionSpec[]
+  ticketTypes: ReservedEventTicketType[]
+  onToggleSkip: (sectionId: string, r: number, c: number) => void
+  onSetTier:    (sectionId: string, r: number, c: number, tierId: string) => void
+}) {
+  const [sectionId, rStr, cStr] = derivedId.split("#")
+  const r = Number(rStr); const c = Number(cStr)
+  const section = sections.find(s => s.id === sectionId)
+  if (!section) return <div className="p-4 text-sm text-muted-foreground">Seat no longer exists.</div>
+  const key = `${r},${c}`
+  const isSkipped = !!section.skipSeats[key]
+  const currentTier = section.tierOverrides[key] ?? section.defaultTicketTypeId
+
+  return (
+    <div className="p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Seat</h3>
+      </div>
+      <div className="text-xs text-muted-foreground">
+        {section.name} · row index {r}, col index {c}
+      </div>
+      <Field label="Ticket type">
+        <select
+          aria-label="Seat ticket type"
+          value={currentTier}
+          onChange={e => onSetTier(sectionId, r, c, e.target.value)}
+          className="w-full px-2 py-1 text-sm border rounded bg-background"
+        >
+          {ticketTypes.map(tt => (
+            <option key={tt.id} value={tt.id}>{tt.name} — {Number(tt.price).toLocaleString()}</option>
+          ))}
+        </select>
+      </Field>
+      <button
+        type="button"
+        onClick={() => onToggleSkip(sectionId, r, c)}
+        className="w-full inline-flex items-center justify-center gap-1.5 rounded border px-3 py-2 text-sm hover:bg-accent"
+      >
+        {isSkipped ? "Restore seat" : "Mark missing (skip)"}
+      </button>
+      <p className="text-[11px] text-muted-foreground">
+        Row letters and seat numbers are computed automatically on save based
+        on the seat&rsquo;s visual position — multiple sections at the same row
+        share a letter and seat numbering continues across them.
+      </p>
+    </div>
+  )
+}
+
+function DecorInspector({
+  decor, onChange, onDelete,
+}: {
+  decor: EditorDecor
+  onChange: (patch: Partial<EditorDecor>) => void
+  onDelete: () => void
+}) {
+  return (
+    <div className="p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">{decor.kind === "rect" ? "Stage / Rect" : "Text label"}</h3>
+        <button
+          type="button"
+          onClick={onDelete}
+          title="Remove"
+          className="text-destructive hover:bg-destructive/10 rounded p-1.5"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
+      <Field label="Label">
+        <input
+          aria-label="Decor label"
+          value={decor.label ?? ""}
+          onChange={e => onChange({ label: e.target.value })}
+          className="w-full px-2 py-1 text-sm border rounded bg-background"
+        />
+      </Field>
+      {decor.kind === "rect" && (
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Width">
+            <input
+              aria-label="Width"
+              type="number" min={20}
+              value={decor.width ?? 200}
+              onChange={e => onChange({ width: Math.max(20, Number(e.target.value)) })}
+              className="w-full px-2 py-1 text-sm border rounded bg-background"
+            />
+          </Field>
+          <Field label="Height">
+            <input
+              aria-label="Height"
+              type="number" min={20}
+              value={decor.height ?? 60}
+              onChange={e => onChange({ height: Math.max(20, Number(e.target.value)) })}
+              className="w-full px-2 py-1 text-sm border rounded bg-background"
+            />
+          </Field>
+        </div>
+      )}
+      <Field label="Fill">
+        <input
+          aria-label="Fill color"
+          type="color"
+          value={decor.fill ?? "#111827"}
+          onChange={e => onChange({ fill: e.target.value })}
+          className="w-full h-8 rounded border"
+        />
+      </Field>
+      <Field label="Text color">
+        <input
+          aria-label="Text color"
+          type="color"
+          value={decor.color ?? "#FFFFFF"}
+          onChange={e => onChange({ color: e.target.value })}
+          className="w-full h-8 rounded border"
+        />
+      </Field>
+    </div>
+  )
+}
+
+function SectionSummary({
+  sections, ticketTypes, onSelect, onRemove,
+}: {
+  sections: SectionSpec[]
+  ticketTypes: ReservedEventTicketType[]
+  onSelect: (id: string) => void
+  onRemove: (id: string) => void
+}) {
+  const rows = useMemo(() => sections.map(s => {
+    const tierIdx = ticketTypes.findIndex(t => t.id === s.defaultTicketTypeId)
+    const count = s.rows * s.cols - Object.keys(s.skipSeats).length
+    return { id: s.id, name: s.name, count, tierIdx }
+  }), [sections, ticketTypes])
+  if (rows.length === 0) {
+    return <div className="text-xs text-muted-foreground">No sections yet.</div>
+  }
+  return (
+    <ul className="space-y-1 text-xs">
+      {rows.map(r => (
+        <li key={r.id} className="group flex items-center gap-2 rounded px-1 py-0.5 hover:bg-accent">
+          <span
+            aria-hidden="true"
+            className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+            style={{ background: tierColor(r.tierIdx) }}
+          />
+          <button
+            type="button"
+            onClick={() => onSelect(r.id)}
+            title="Select section"
+            className="flex-1 min-w-0 text-left truncate"
+          >
+            {r.name}
+          </button>
+          <span className="text-muted-foreground tabular-nums">{r.count}</span>
+          <button
+            type="button"
+            onClick={() => onRemove(r.id)}
+            title="Remove section"
+            className="opacity-0 group-hover:opacity-100 text-destructive hover:bg-destructive/10 rounded p-1 transition-opacity"
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -1184,36 +1058,27 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 // ---------------------------------------------------------------------------
 
 function AddSectionModal({
-  ticketTypes, existingSections, onCancel, onSubmit,
+  ticketTypes, existingNames, onCancel, onSubmit,
 }: {
   ticketTypes: ReservedEventTicketType[]
-  existingSections: string[]
+  existingNames: string[]
   onCancel: () => void
-  onSubmit: (opts: { name: string; rows: number; cols: number; spacing: number; ticket_type_id: string; startRowLabel?: string }) => void
+  onSubmit: (opts: { name: string; rows: number; cols: number; spacing: number; ticket_type_id: string }) => void
 }) {
   const [name, setName] = useState("")
   const [rows, setRows] = useState(8)
   const [cols, setCols] = useState(12)
   const [spacing, setSpacing] = useState(DEFAULT_SEAT_SPACING)
   const [ticketTypeId, setTicketTypeId] = useState(ticketTypes[0]?.id ?? "")
-  // Letter label admin types directly. "A" for front sections, "AA" for the
-  // back balcony block in the reference layout. Lower-case is normalised.
-  const [startRowLabel, setStartRowLabel] = useState("A")
 
   const submit = () => {
     if (!name.trim()) { toast.error("Section name required"); return }
     if (!ticketTypeId) { toast.error("Pick a ticket type"); return }
     if (rows < 1 || cols < 1) { toast.error("Rows and cols must be positive"); return }
-    const cleaned = startRowLabel.toUpperCase().trim()
-    if (!/^[A-Z]+$/.test(cleaned)) {
-      toast.error("Start row label must be letters only (e.g. A, AA, F).")
-      return
-    }
     onSubmit({
       name: name.trim(),
       rows, cols, spacing,
       ticket_type_id: ticketTypeId,
-      startRowLabel: cleaned,
     })
   }
 
@@ -1222,50 +1087,62 @@ function AddSectionModal({
       <div className="bg-background rounded-lg w-full max-w-md shadow-xl">
         <div className="flex items-center justify-between px-5 py-3 border-b">
           <h3 className="font-semibold">Add section</h3>
-          <button onClick={onCancel} className="p-1 rounded hover:bg-accent"><X className="h-4 w-4" /></button>
+          <button
+            type="button"
+            onClick={onCancel}
+            title="Close"
+            className="p-1 rounded hover:bg-accent"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
         <div className="p-5 space-y-3">
           <Field label="Section name">
             <input
+              aria-label="Section name"
               autoFocus
               value={name}
               onChange={e => setName(e.target.value)}
-              placeholder="e.g. Floor 2 Left"
+              placeholder="e.g. Orchestra Left"
               list="existing-sections"
               className="w-full px-3 py-2 text-sm border rounded bg-background"
             />
             <datalist id="existing-sections">
-              {existingSections.map(s => <option key={s} value={s} />)}
+              {existingNames.map(s => <option key={s} value={s} />)}
             </datalist>
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Rows">
-              <input type="number" min={1} value={rows} onChange={e => setRows(Math.max(1, Number(e.target.value)))}
-                className="w-full px-3 py-2 text-sm border rounded bg-background" />
+              <input
+                aria-label="Rows"
+                type="number" min={1}
+                value={rows}
+                onChange={e => setRows(Math.max(1, Number(e.target.value)))}
+                className="w-full px-3 py-2 text-sm border rounded bg-background"
+              />
             </Field>
             <Field label="Cols">
-              <input type="number" min={1} value={cols} onChange={e => setCols(Math.max(1, Number(e.target.value)))}
-                className="w-full px-3 py-2 text-sm border rounded bg-background" />
-            </Field>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Seat spacing (px)">
-              <input type="number" min={10} value={spacing} onChange={e => setSpacing(Math.max(10, Number(e.target.value)))}
-                className="w-full px-3 py-2 text-sm border rounded bg-background" />
-            </Field>
-            <Field label="Start row label">
               <input
-                type="text"
-                value={startRowLabel}
-                onChange={e => setStartRowLabel(e.target.value)}
-                placeholder="A, AA, F …"
-                maxLength={3}
-                className="w-full px-3 py-2 text-sm border rounded bg-background uppercase"
+                aria-label="Cols"
+                type="number" min={1}
+                value={cols}
+                onChange={e => setCols(Math.max(1, Number(e.target.value)))}
+                className="w-full px-3 py-2 text-sm border rounded bg-background"
               />
             </Field>
           </div>
+          <Field label="Seat spacing (px)">
+            <input
+              aria-label="Seat spacing"
+              type="number" min={10}
+              value={spacing}
+              onChange={e => setSpacing(Math.max(10, Number(e.target.value)))}
+              className="w-full px-3 py-2 text-sm border rounded bg-background"
+            />
+          </Field>
           <Field label="Ticket type">
             <select
+              aria-label="Ticket type"
               value={ticketTypeId}
               onChange={e => setTicketTypeId(e.target.value)}
               className="w-full px-3 py-2 text-sm border rounded bg-background"
@@ -1278,12 +1155,22 @@ function AddSectionModal({
             </select>
           </Field>
           <div className="text-xs text-muted-foreground">
-            Generates {rows * cols} seats at the canvas center. You can drag individual seats to fit afterwards.
+            Generates {rows * cols} seats at the canvas center. Row letters
+            and seat numbers are computed automatically based on visual
+            position — drop sections side-by-side and they&rsquo;ll share row
+            letters and continue seat numbering across them.
           </div>
         </div>
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t bg-muted/30">
-          <button onClick={onCancel} className="px-3 py-1.5 text-sm rounded hover:bg-accent">Cancel</button>
           <button
+            type="button"
+            onClick={onCancel}
+            className="px-3 py-1.5 text-sm rounded hover:bg-accent"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
             onClick={submit}
             disabled={ticketTypes.length === 0}
             className="inline-flex items-center gap-1.5 rounded bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
