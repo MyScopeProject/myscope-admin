@@ -186,6 +186,24 @@ export const adminAPI = {
   getFinanceReport: (params?: { from?: string; to?: string }) =>
     api.get('/admin/reports/finance', { params }),
   // CSV download is handled directly via window.open (auth via cookie)
+
+  // Shop orders — admin oversight across every organizer's storefront.
+  // Read-mostly: only mutation is force-cancel for support escalations.
+  getShopOrders: (params?: {
+    status?: 'Pending' | 'Confirmed' | 'Cancelled' | 'Refunded'
+    fulfillment_status?: 'pending' | 'preparing' | 'shipped' | 'delivered' | 'picked_up' | 'returned'
+    organizerId?: string
+    q?: string
+    limit?: number
+    offset?: number
+  }) => api.get('/admin/shop/orders', { params }),
+
+  getShopOrdersSummary: () => api.get('/admin/shop/orders/summary'),
+
+  getShopOrderById: (id: string) => api.get(`/admin/shop/orders/${id}`),
+
+  forceCancelShopOrder: (id: string, reason: string) =>
+    api.post(`/admin/shop/orders/${id}/force-cancel`, { reason }),
 };
 
 // Admin event management — superadmin override that reuses the organizer

@@ -24,6 +24,7 @@ import {
   Armchair,
   LayoutGrid,
   History,
+  ShoppingBag,
 } from "lucide-react"
 import { ThemeToggle } from "../ui/theme-toggle"
 
@@ -41,6 +42,7 @@ const allNavItems: NavItem[] = [
   { name: "Event Review", href: "/events/review", icon: CalendarCheck },
   { name: "Hero Carousel", href: "/hero-carousel", icon: Star },
   { name: "Past Events", href: "/past-events", icon: History },
+  { name: "Shop Orders", href: "/shop-orders", icon: ShoppingBag },
   { name: "Payouts", href: "/payouts", icon: Banknote },
   { name: "Finance Reports", href: "/reports", icon: BarChart3 },
   { name: "Reserved Seating Events", href: "/reserved-seating-events", icon: LayoutGrid },
