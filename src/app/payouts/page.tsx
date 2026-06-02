@@ -10,9 +10,11 @@ import { adminAPI } from "@/lib/apiEndpoints"
 import toast from "react-hot-toast"
 import {
   Banknote,
+  Calendar,
   CheckCircle2,
   Clock,
   Loader,
+  ShoppingBag,
   X,
   XCircle,
 } from "lucide-react"
@@ -79,6 +81,42 @@ const STATUS_BADGE: Record<Status, { label: string; cls: string; icon: React.Rea
   approved: { label: "Approved", cls: "bg-primary/15 text-primary", icon: <CheckCircle2 className="w-3.5 h-3.5" /> },
   paid: { label: "Paid", cls: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400", icon: <Banknote className="w-3.5 h-3.5" /> },
   rejected: { label: "Rejected", cls: "bg-destructive/15 text-destructive", icon: <XCircle className="w-3.5 h-3.5" /> },
+}
+
+// Payouts come from two sources now:
+//   - event_id IS NOT NULL → event payout (per-event revenue)
+//   - event_id IS NULL     → shop payout (storefront-wide revenue)
+// The earlier "All events" wording for the null case was misleading once
+// shop payouts existed, so we surface the source explicitly.
+function PayoutSourcePill({ payout }: { payout: Payout }) {
+  if (payout.event_id && payout.event?.title) {
+    return (
+      <span className="inline-flex max-w-56 items-center gap-1 truncate rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+        <Calendar className="h-3 w-3 shrink-0" />
+        <span className="truncate">{payout.event.title}</span>
+      </span>
+    )
+  }
+  if (!payout.event_id) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+        <ShoppingBag className="h-3 w-3" />
+        Shop revenue
+      </span>
+    )
+  }
+  // event_id present but no joined title — likely a deleted event. Show id stub.
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+      <Calendar className="h-3 w-3" />
+      Event {payout.event_id.slice(0, 6)}
+    </span>
+  )
+}
+
+const formatLkr = (n: number | string) => {
+  const v = typeof n === "string" ? Number(n) : n
+  return `LKR ${(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 export default function PayoutsPage() {
@@ -314,7 +352,7 @@ export default function PayoutsPage() {
               <table className="w-full text-sm">
                 <thead className="bg-muted/30">
                   <tr>
-                    {["Date", "Organizer", "Event", "Status", "Actions"].map(h => (
+                    {["Date", "Organizer", "Source", "Amount", "Status", "Actions"].map(h => (
                       <th key={h} className="text-left px-4 py-3 font-medium text-muted-foreground">{h}</th>
                     ))}
                   </tr>
@@ -328,7 +366,9 @@ export default function PayoutsPage() {
                         className="border-t border-border hover:bg-muted/20 cursor-pointer"
                         onClick={() => setSelected(p)}
                       >
-                        <td className="px-4 py-3 text-muted-foreground">{new Date(p.requested_at).toLocaleDateString()}</td>
+                        <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
+                          {new Date(p.requested_at).toLocaleDateString()}
+                        </td>
                         <td className="px-4 py-3">
                           {/* Show organizer BRAND (business_name), with the
                               user name + email as a smaller fallback context
@@ -346,7 +386,12 @@ export default function PayoutsPage() {
                             )}
                           </div>
                         </td>
-                        <td className="px-4 py-3">{p.event?.title ?? "All events"}</td>
+                        <td className="px-4 py-3">
+                          <PayoutSourcePill payout={p} />
+                        </td>
+                        <td className="px-4 py-3 font-semibold text-foreground whitespace-nowrap">
+                          {formatLkr(p.amount)}
+                        </td>
                         <td className="px-4 py-3">
                           <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs ${meta.cls}`}>
                             {meta.icon} {meta.label}
@@ -422,20 +467,23 @@ export default function PayoutsPage() {
                   </div>
                 )}
 
-                {selectedOrg && orgEvents.length > 0 && (
+                {selectedOrg && (
                   <div>
-                    <label htmlFor="evt" className="mb-1.5 block text-sm font-medium text-foreground">Event (optional)</label>
+                    <label htmlFor="evt" className="mb-1.5 block text-sm font-medium text-foreground">Source</label>
                     <select
                       id="evt"
                       value={createEvent}
                       onChange={(e) => setCreateEvent(e.target.value)}
                       className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                     >
-                      <option value="">All events</option>
+                      <option value="">Shop revenue (storefront-wide)</option>
                       {orgEvents.map((ev) => (
                         <option key={ev.id} value={ev.id}>{ev.title}</option>
                       ))}
                     </select>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Pick an event for per-event revenue, or leave on Shop revenue for storefront-wide payouts.
+                    </p>
                   </div>
                 )}
 
@@ -493,89 +541,157 @@ export default function PayoutsPage() {
               onClick={() => !busy && setSelected(null)}
             >
               <div
-                className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-2xl"
+                className="flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h2 className="text-lg font-semibold text-foreground">Payout details</h2>
-                    <span className={`mt-2 inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs ${meta.cls}`}>
-                      {meta.icon} {meta.label}
-                    </span>
+                {/* Sticky header — status, source, close button. The amount
+                    moves up here so the most important info is always visible
+                    even when the body scrolls. */}
+                <div className="flex items-start justify-between gap-3 border-b border-border bg-muted/30 p-5">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${meta.cls}`}>
+                        {meta.icon} {meta.label}
+                      </span>
+                      <PayoutSourcePill payout={selected} />
+                    </div>
+                    <div className="mt-3">
+                      <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Amount</div>
+                      <div className="mt-0.5 text-3xl font-bold text-foreground">{formatLkr(selected.amount)}</div>
+                    </div>
                   </div>
-                  <button type="button" onClick={() => setSelected(null)} aria-label="Close" title="Close" className="rounded-md p-1 text-muted-foreground hover:bg-muted">
+                  <button
+                    type="button"
+                    onClick={() => setSelected(null)}
+                    aria-label="Close"
+                    title="Close"
+                    className="rounded-md p-1 text-muted-foreground hover:bg-muted"
+                  >
                     <X className="h-4 w-4" />
                   </button>
                 </div>
 
-                <div className="mt-5 text-center">
-                  <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Amount</div>
-                  <div className="mt-1 text-3xl font-bold text-foreground">LKR {Number(selected.amount).toLocaleString()}</div>
-                </div>
-
-                <div className="mt-5 divide-y divide-border rounded-xl border border-border">
-                  {/* Organizer block — lead with brand name; user account is
-                      surfaced as supporting context (admins still need the
-                      email to reach out about a payout). */}
-                  <DetailRow
-                    label="Organizer"
-                    value={
-                      selected.organizer_profile?.business_name
-                        || selected.organizer?.name
-                        || selected.organizer_id
-                    }
-                  />
-                  {selected.organizer_profile?.business_type && (
-                    <DetailRow label="Type" value={selected.organizer_profile.business_type} />
-                  )}
-                  <DetailRow label="Contact email" value={selected.organizer?.email || "—"} />
-                  {selected.organizer_profile?.phone && (
-                    <DetailRow label="Phone" value={selected.organizer_profile.phone} />
-                  )}
-                  <DetailRow label="Event" value={selected.event?.title || "All events"} />
-                  <DetailRow label="Requested" value={new Date(selected.requested_at).toLocaleString()} />
-                  <DetailRow label="Processed" value={selected.processed_at ? new Date(selected.processed_at).toLocaleString() : "—"} />
-                  <DetailRow label="Notes" value={selected.notes || "—"} />
-                </div>
-
-                {/* Bank details — pulled from organizer_profiles. Always render
-                    the section so admins notice if it's missing (an empty
-                    section reads "Not provided" rather than disappearing). */}
-                <div className="mt-5">
-                  <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                    <Banknote className="h-3.5 w-3.5" />
-                    Bank details
-                  </div>
-                  {selected.organizer_profile?.bank_account_number ? (
-                    <div className="divide-y divide-border rounded-xl border border-border">
-                      <DetailRow label="Bank" value={selected.organizer_profile.bank_name || "—"} />
-                      <DetailRow label="Branch" value={selected.organizer_profile.branch_name || "—"} />
-                      <DetailRow label="Account holder" value={selected.organizer_profile.bank_account_name || "—"} />
-                      <DetailRow label="Account number" value={selected.organizer_profile.bank_account_number} />
-                      {selected.organizer_profile.bank_code && (
-                        <DetailRow label="Bank code" value={selected.organizer_profile.bank_code} />
-                      )}
-                      {selected.organizer_profile.branch_code && (
-                        <DetailRow label="Branch code" value={selected.organizer_profile.branch_code} />
-                      )}
+                {/* Scrollable body — grouped sections instead of one long
+                    table. Each section has its own card so admins can
+                    scan/match each block (organizer · payout meta · bank). */}
+                <div className="flex-1 space-y-5 overflow-y-auto p-5">
+                  {/* Organizer section */}
+                  <section>
+                    <SectionLabel icon={<Banknote className="h-3.5 w-3.5" />}>Organizer</SectionLabel>
+                    <div className="mt-2 rounded-xl border border-border">
+                      <div className="flex items-start gap-3 p-4">
+                        {selected.organizer_profile?.profile_image_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={selected.organizer_profile.profile_image_url}
+                            alt=""
+                            className="h-10 w-10 shrink-0 rounded-full border border-border object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+                            {(selected.organizer_profile?.business_name
+                              ?? selected.organizer?.name
+                              ?? "?").charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-semibold text-foreground">
+                            {selected.organizer_profile?.business_name
+                              || selected.organizer?.name
+                              || selected.organizer_id}
+                          </div>
+                          <div className="truncate text-xs text-muted-foreground">
+                            {selected.organizer?.email}
+                            {selected.organizer_profile?.business_type && (
+                              <> · {selected.organizer_profile.business_type}</>
+                            )}
+                          </div>
+                          {selected.organizer_profile?.phone && (
+                            <div className="mt-0.5 text-xs text-muted-foreground">
+                              {selected.organizer_profile.phone}
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  ) : (
-                    <div className="rounded-xl border border-dashed border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
-                      Organizer hasn't added bank details yet.
+                  </section>
+
+                  {/* Payout meta — source/timing/notes. Source title repeated
+                      here in full (the pill in the header is the visual cue). */}
+                  <section>
+                    <SectionLabel icon={<Clock className="h-3.5 w-3.5" />}>Payout</SectionLabel>
+                    <div className="mt-2 divide-y divide-border rounded-xl border border-border">
+                      <DetailRow
+                        label="Source"
+                        value={
+                          selected.event_id
+                            ? (selected.event?.title || `Event ${selected.event_id.slice(0, 8)}`)
+                            : "Shop revenue (storefront-wide)"
+                        }
+                      />
+                      <DetailRow label="Requested" value={new Date(selected.requested_at).toLocaleString()} />
+                      <DetailRow
+                        label="Processed"
+                        value={selected.processed_at ? new Date(selected.processed_at).toLocaleString() : "—"}
+                      />
+                      {selected.notes && <DetailRow label="Notes" value={selected.notes} />}
                     </div>
+                  </section>
+
+                  {/* Bank details. Empty-state when missing reads as a clear
+                      callout instead of disappearing — admins shouldn't
+                      silently miss that an organizer hasn't entered banking. */}
+                  <section>
+                    <SectionLabel icon={<Banknote className="h-3.5 w-3.5" />}>Bank details</SectionLabel>
+                    {selected.organizer_profile?.bank_account_number ? (
+                      <div className="mt-2 divide-y divide-border rounded-xl border border-border">
+                        <DetailRow label="Bank" value={selected.organizer_profile.bank_name || "—"} />
+                        <DetailRow label="Branch" value={selected.organizer_profile.branch_name || "—"} />
+                        <DetailRow label="Account holder" value={selected.organizer_profile.bank_account_name || "—"} />
+                        <DetailRow label="Account number" value={selected.organizer_profile.bank_account_number} />
+                        {selected.organizer_profile.bank_code && (
+                          <DetailRow label="Bank code" value={selected.organizer_profile.bank_code} />
+                        )}
+                        {selected.organizer_profile.branch_code && (
+                          <DetailRow label="Branch code" value={selected.organizer_profile.branch_code} />
+                        )}
+                      </div>
+                    ) : (
+                      <div className="mt-2 rounded-xl border border-dashed border-destructive/40 bg-destructive/5 px-4 py-3 text-xs text-destructive">
+                        Organizer hasn't added bank details yet. Reach out before approving.
+                      </div>
+                    )}
+                  </section>
+
+                  {/* Payment slip — only after the payout is paid */}
+                  {selected.slip_url && (
+                    <section>
+                      <SectionLabel icon={<CheckCircle2 className="h-3.5 w-3.5" />}>Payment slip</SectionLabel>
+                      <a href={selected.slip_url} target="_blank" rel="noopener noreferrer" className="mt-2 block">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={selected.slip_url}
+                          alt="Payment slip"
+                          className="w-full rounded-xl border border-border bg-muted object-contain max-h-64"
+                        />
+                      </a>
+                    </section>
                   )}
                 </div>
 
-                {selected.slip_url && (
-                  <a href={selected.slip_url} target="_blank" rel="noopener noreferrer" className="mt-4 block">
-                    <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1.5">Payment slip</div>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={selected.slip_url} alt="Payment slip" className="w-full rounded-lg border border-border bg-muted object-contain max-h-64" />
-                  </a>
-                )}
-
+                {/* Sticky action footer — pinned so the admin can always see
+                    the approve/reject buttons even on a long card. Only shown
+                    for actionable states. */}
                 {(selected.status === "requested" || selected.status === "approved") && (
-                  <div className="mt-6 flex justify-end gap-2">
+                  <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border bg-card p-4">
+                    <button
+                      type="button"
+                      onClick={() => reject(selected.id)}
+                      disabled={busy}
+                      className="inline-flex items-center gap-1.5 rounded-md bg-destructive/15 px-4 py-2 text-sm font-medium text-destructive hover:bg-destructive/25 disabled:opacity-50"
+                    >
+                      <XCircle className="h-4 w-4" /> Reject
+                    </button>
                     {selected.status === "requested" && (
                       <button
                         type="button"
@@ -596,14 +712,6 @@ export default function PayoutsPage() {
                         <Banknote className="h-4 w-4" /> Mark paid
                       </button>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => reject(selected.id)}
-                      disabled={busy}
-                      className="inline-flex items-center gap-1.5 rounded-md bg-destructive/15 px-4 py-2 text-sm font-medium text-destructive hover:bg-destructive/25 disabled:opacity-50"
-                    >
-                      <XCircle className="h-4 w-4" /> Reject
-                    </button>
                   </div>
                 )}
               </div>
@@ -625,7 +733,13 @@ export default function PayoutsPage() {
                 <div>
                   <h2 className="text-lg font-semibold text-foreground">Mark payout as paid</h2>
                   <p className="mt-0.5 text-sm text-muted-foreground">
-                    LKR {Number(payTarget.amount).toLocaleString()} to {payTarget.organizer?.name || "organizer"}
+                    {formatLkr(payTarget.amount)} to {payTarget.organizer_profile?.business_name || payTarget.organizer?.name || "organizer"}
+                    {!payTarget.event_id && (
+                      <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                        <ShoppingBag className="h-2.5 w-2.5" />
+                        Shop
+                      </span>
+                    )}
                   </p>
                 </div>
                 <button type="button" onClick={() => setPayTarget(null)} aria-label="Close" title="Close" className="rounded-md p-1 text-muted-foreground hover:bg-muted">
@@ -695,3 +809,14 @@ function DetailRow({ label, value }: { label: string; value: string }) {
     </div>
   )
 }
+
+// Compact section header used inside the payout detail card.
+function SectionLabel({ icon, children }: { icon?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+      {icon}
+      {children}
+    </div>
+  )
+}
+
