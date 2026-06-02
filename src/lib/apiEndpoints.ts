@@ -99,6 +99,36 @@ export const adminAPI = {
     })
   },
 
+  // Partners — admin-curated logo strip shown on the home page above the footer.
+  // Mirrors past-events shape exactly; `name` replaces `title`, `website_url`
+  // replaces `link_url`.
+  listPartners: () => api.get('/partners/admin'),
+  createPartner: (data: {
+    image_url: string
+    name?: string | null
+    website_url?: string | null
+    sort_order?: number
+    active?: boolean
+  }) => api.post('/partners/admin', data),
+  updatePartner: (
+    id: string,
+    data: Partial<{
+      image_url: string
+      name: string | null
+      website_url: string | null
+      sort_order: number
+      active: boolean
+    }>,
+  ) => api.patch(`/partners/admin/${id}`, data),
+  deletePartner: (id: string) => api.delete(`/partners/admin/${id}`),
+  uploadPartnerImage: (file: File) => {
+    const fd = new FormData()
+    fd.append('image', file)
+    return api.post('/partners/admin/upload-image', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+
   // Settings Management
   getSettings: () => api.get('/admin/settings'),
   updateSiteConfig: (data: any) => api.put('/admin/settings/site-config', data),
