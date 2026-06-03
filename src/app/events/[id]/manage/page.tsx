@@ -9,6 +9,7 @@ import { useAuth } from "@/contexts/auth-context"
 import { PageLoader } from "@/components/ui/loading"
 import { adminEventManage } from "@/lib/apiEndpoints"
 import { EventCommunicationsCard } from "@/components/events/event-communications-card"
+import { EventCommBillingCard } from "@/components/events/event-comm-billing-card"
 import toast from "react-hot-toast"
 import {
   ArrowLeft, Banknote, Calendar, CalendarClock, CheckCircle2, Loader, MapPin,
@@ -432,6 +433,11 @@ function CommsTab({ eventId }: { eventId: string }) {
       {/* Counter card sits above the announcement composer so admins see the
           running tally before they fire off another batch. */}
       <EventCommunicationsCard eventId={eventId} />
+
+      {/* Per-event billing config. Admins toggle SMS / email billing and pick
+          which types to charge for; the global rate (default 0.5 LKR) lives
+          on the Settings page. Forward-only — past sends keep their snapshot. */}
+      <EventCommBillingCard eventId={eventId} />
 
       <Card>
         <h2 className="text-sm font-semibold mb-3 inline-flex items-center gap-1.5"><Megaphone className="w-4 h-4" /> Announce to attendees</h2>

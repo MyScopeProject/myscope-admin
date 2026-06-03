@@ -295,6 +295,39 @@ export const adminEventManage = {
   announce: (id: string, body: { message: string; channel: 'email' | 'sms' | 'both' }) =>
     api.post(`/organizer/events/${id}/announce`, body),
 
+  // Comm billing — admins enable per-event SMS/email billing and pick which
+  // message types to charge for. Lives under the admin events router (not
+  // organizer) since organizers don't get to set their own billing.
+  getCommBilling: (id: string) =>
+    api.get<{
+      success: boolean
+      data: {
+        config: {
+          sms_enabled: boolean
+          email_enabled: boolean
+          sms_billable_types: string[]
+          email_billable_types: string[]
+        }
+        rates: { smsRateLkr: number; emailRateLkr: number }
+        totals: {
+          total_lkr: number
+          sms: { count: number; total_lkr: number }
+          email: { count: number; total_lkr: number }
+        }
+        catalogue: { email: string[]; sms: string[] }
+        defaults: { billable_types: string[] }
+      }
+    }>(`/admin/events/${id}/comm-billing`),
+  updateCommBilling: (
+    id: string,
+    body: {
+      sms_enabled?: boolean
+      email_enabled?: boolean
+      sms_billable_types?: string[]
+      email_billable_types?: string[]
+    },
+  ) => api.patch(`/admin/events/${id}/comm-billing`, body),
+
   // Ticket types
   listTicketTypes: (id: string) => api.get(`/organizer/events/${id}/ticket-types`),
   createTicketType: (id: string, data: any) =>
