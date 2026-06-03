@@ -80,6 +80,11 @@ export const ROUTE_ACCESS: Record<string, UserRole[]> = {
   // Event approval queue — same access as event management
   '/events/review': ['superadmin', 'content-manager', 'event-manager'],
 
+  // Admin-creates-event-for-organizer flow. Same access list as event mgmt:
+  // anyone who could approve someone's event can also bootstrap one on their
+  // behalf.
+  '/events/create': ['superadmin', 'content-manager', 'event-manager'],
+
   // Hero carousel curation — public landing-page management
   '/hero-carousel': ['superadmin', 'content-manager'],
 

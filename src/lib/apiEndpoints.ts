@@ -23,7 +23,8 @@ export const adminAPI = {
   deleteUser: (id: string) => api.delete(`/admin/users/${id}`),
   
   // Event Management — backend supports list/get/approve/reject/delete. Create
-  // and edits live with the organizer flow (organizer dashboard / API).
+  // also lives here for the "admin sets up an event on behalf of an organizer"
+  // flow; organizers still create their own events via the organizer dashboard.
   getEvents: (params?: { page?: number; limit?: number; search?: string; status?: string; approvalStatus?: string }) =>
     api.get('/admin/events', { params }),
   getEventById: (id: string) => api.get(`/admin/events/${id}`),
@@ -35,6 +36,45 @@ export const adminAPI = {
     api.delete(`/admin/events/${id}`, { params: opts?.force ? { force: 'true' } : undefined }),
   setEventFeatured: (id: string, featured: boolean) =>
     api.patch(`/admin/events/${id}/featured`, { featured }),
+
+  // Picker source for the "create event for organizer" page — every approved
+  // organizer in the system. Filtered/searched client-side since the list is
+  // small and we don't need pagination.
+  listApprovedOrganizers: () =>
+    api.get<{
+      success: boolean
+      data: {
+        organizers: Array<{
+          user_id: string
+          business_name: string
+          contact_name: string | null
+          email: string | null
+          profile_image: string | null
+        }>
+      }
+    }>('/admin/events/approved-organizers'),
+
+  createEventForOrganizer: (payload: {
+    organizer_id: string
+    title: string
+    description?: string | null
+    category?: string | null
+    venue_name?: string | null
+    venue_address?: string | null
+    venue_location_url?: string | null
+    banner_url?: string | null
+    start_time: string
+    end_time?: string | null
+    capacity?: number | null
+    seating_mode?: 'none' | 'free'
+    ticket_types: Array<{
+      name: string
+      description?: string | null
+      price: number
+      quantity_total: number
+      per_order_limit?: number
+    }>
+  }) => api.post('/admin/events', payload),
 
   // Hero slides — admin-uploaded banners OR references to existing events.
   // Each row carries exactly one of image_url / event_id. Public read at
