@@ -54,6 +54,13 @@ export const adminAPI = {
       }
     }>('/admin/events/approved-organizers'),
 
+  // Per-event end-to-end earnings breakdown. Lists every event with revenue,
+  // convenience fees, platform fees, comm billing, refunds, and payouts —
+  // plus grand totals across the result set for the page-level summary tiles.
+  listEarnings: (params?: { approval_status?: string }) =>
+    api.get('/admin/earnings', { params }),
+  getEventEarnings: (id: string) => api.get(`/admin/earnings/${id}`),
+
   createEventForOrganizer: (payload: {
     organizer_id: string
     title: string
@@ -285,6 +292,11 @@ export const adminEventManage = {
   update: (id: string, data: any) => api.patch(`/organizer/events/${id}`, data),
   pauseSales: (id: string) => api.post(`/organizer/events/${id}/pause-sales`),
   resumeSales: (id: string) => api.post(`/organizer/events/${id}/resume-sales`),
+  // Convenience fee toggle is admin-only — lives on the admin events router
+  // even though the rest of this object talks to /organizer routes (admins
+  // act as superadmin organizers on those paths). Default is ON.
+  setConvenienceFee: (id: string, enabled: boolean) =>
+    api.patch(`/admin/events/${id}/convenience-fee`, { enabled }),
   cancel: (id: string, reason?: string) =>
     api.post(`/organizer/events/${id}/cancel`, reason ? { reason } : {}),
   postpone: (

@@ -101,6 +101,10 @@ export const ROUTE_ACCESS: Record<string, UserRole[]> = {
   '/payouts': ['superadmin', 'event-manager'],
   '/reports': ['superadmin'],
 
+  // Per-event earnings dashboard — admin-only money view (revenue,
+  // convenience fees, platform fees, payouts). Same access list as payouts.
+  '/earnings': ['superadmin', 'event-manager'],
+
   // Shop orders — superadmin + event-manager + support can investigate.
   // Force-cancel still requires explicit confirmation in the UI.
   '/shop-orders': ['superadmin', 'event-manager', 'support'],

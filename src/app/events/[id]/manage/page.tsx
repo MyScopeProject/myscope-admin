@@ -13,7 +13,8 @@ import { EventCommBillingCard } from "@/components/events/event-comm-billing-car
 import toast from "react-hot-toast"
 import {
   ArrowLeft, Banknote, Calendar, CalendarClock, CheckCircle2, Loader, MapPin,
-  Megaphone, Pause, Play, Plus, RotateCcw, Ticket as TicketIcon, Trash2, Users, X, XCircle,
+  Megaphone, Pause, Play, Plus, RotateCcw, Ticket as TicketIcon, Trash2, Users,
+  Wallet, WalletMinimal, X, XCircle,
 } from "lucide-react"
 
 type Tab = "overview" | "tickets" | "attendees" | "checkin" | "promo" | "waitlist" | "comms"
@@ -63,6 +64,23 @@ export default function ManageEventPage() {
     try {
       await (resume ? adminEventManage.resumeSales(id) : adminEventManage.pauseSales(id))
       toast.success(resume ? "Sales resumed." : "Sales paused.")
+      loadEvent()
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || "Failed.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Per-event convenience-fee override. The toggle only affects NEW bookings —
+  // existing rows keep whatever fee was snapshotted on them at creation time.
+  // Default for every event is ON; admin disables here for partner / comp events.
+  const toggleConvenienceFee = async () => {
+    const nextEnabled = event?.convenience_fee_enabled === false
+    setBusy(true)
+    try {
+      await adminEventManage.setConvenienceFee(id, nextEnabled)
+      toast.success(nextEnabled ? "Convenience fee enabled." : "Convenience fee disabled.")
       loadEvent()
     } catch (e: any) {
       toast.error(e?.response?.data?.message || "Failed.")
@@ -159,6 +177,31 @@ export default function ManageEventPage() {
                 ) : (
                   <button type="button" onClick={() => toggleSales(false)} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50">
                     <Pause className="w-4 h-4" /> Pause sales
+                  </button>
+                )}
+                {/* Per-event convenience fee toggle. Default state is ON — the
+                    button text reflects whether the next click will turn it
+                    off (currently on) or on (currently off). Forward-only:
+                    changes only affect new bookings. */}
+                {event.convenience_fee_enabled === false ? (
+                  <button
+                    type="button"
+                    onClick={toggleConvenienceFee}
+                    disabled={busy}
+                    title="Convenience fee is OFF for this event — new bookings won't be charged. Click to enable."
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-400 hover:bg-amber-500/15 disabled:opacity-50"
+                  >
+                    <Wallet className="w-4 h-4" /> Enable conv. fee
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={toggleConvenienceFee}
+                    disabled={busy}
+                    title="Convenience fee is ON for this event. Click to disable for new bookings."
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50"
+                  >
+                    <WalletMinimal className="w-4 h-4" /> Disable conv. fee
                   </button>
                 )}
                 {event.postponed ? (
