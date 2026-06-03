@@ -9,6 +9,7 @@ import { useAuth } from "@/contexts/auth-context"
 import { PageLoader } from "@/components/ui/loading"
 import { adminAPI } from "@/lib/apiEndpoints"
 import { SeatGridPreview, type LayoutData } from "@/components/events/seat-grid-preview"
+import { EventCommunicationsCard } from "@/components/events/event-communications-card"
 import toast from "react-hot-toast"
 import {
   AlertTriangle,
@@ -462,6 +463,11 @@ export default function AdminEventDetailPage() {
                   </div>
                 )}
               </Section>
+
+              {/* Per-event communications — counts of every email + SMS this
+                  event has triggered, broken down by message type. Forward-only:
+                  events that ran before this feature shipped show zeros. */}
+              <EventCommunicationsCard eventId={event.id} />
 
               {/* Organizer */}
               {event.organizer && (
