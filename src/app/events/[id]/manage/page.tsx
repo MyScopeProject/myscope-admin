@@ -8,6 +8,7 @@ import { AdminLayout } from "@/components/layout/AdminLayout"
 import { useAuth } from "@/contexts/auth-context"
 import { PageLoader } from "@/components/ui/loading"
 import { adminEventManage } from "@/lib/apiEndpoints"
+import { EventCommunicationsCard } from "@/components/events/event-communications-card"
 import toast from "react-hot-toast"
 import {
   ArrowLeft, Banknote, Calendar, CalendarClock, CheckCircle2, Loader, MapPin,
@@ -427,20 +428,26 @@ function CommsTab({ eventId }: { eventId: string }) {
     catch (e: any) { toast.error(e?.response?.data?.message || "Failed.") } finally { setBusy(false) }
   }
   return (
-    <Card>
-      <h2 className="text-sm font-semibold mb-3 inline-flex items-center gap-1.5"><Megaphone className="w-4 h-4" /> Announce to attendees</h2>
-      <div className="space-y-3">
-        <select value={channel} onChange={(e) => setChannel(e.target.value as any)} className="rounded-md border border-input bg-background px-2.5 py-2 text-sm">
-          <option value="email">Email</option><option value="sms">SMS</option><option value="both">Email + SMS</option>
-        </select>
-        <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={5} placeholder="Your message to all confirmed attendees…" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
-        <div className="flex justify-end">
-          <button type="button" onClick={send} disabled={busy} className="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50">
-            {busy ? <Loader className="w-4 h-4 animate-spin" /> : <Megaphone className="w-4 h-4" />} Send announcement
-          </button>
+    <div className="space-y-4">
+      {/* Counter card sits above the announcement composer so admins see the
+          running tally before they fire off another batch. */}
+      <EventCommunicationsCard eventId={eventId} />
+
+      <Card>
+        <h2 className="text-sm font-semibold mb-3 inline-flex items-center gap-1.5"><Megaphone className="w-4 h-4" /> Announce to attendees</h2>
+        <div className="space-y-3">
+          <select value={channel} onChange={(e) => setChannel(e.target.value as any)} className="rounded-md border border-input bg-background px-2.5 py-2 text-sm">
+            <option value="email">Email</option><option value="sms">SMS</option><option value="both">Email + SMS</option>
+          </select>
+          <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={5} placeholder="Your message to all confirmed attendees…" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
+          <div className="flex justify-end">
+            <button type="button" onClick={send} disabled={busy} className="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50">
+              {busy ? <Loader className="w-4 h-4 animate-spin" /> : <Megaphone className="w-4 h-4" />} Send announcement
+            </button>
+          </div>
         </div>
-      </div>
-    </Card>
+      </Card>
+    </div>
   )
 }
 
