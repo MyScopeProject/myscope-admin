@@ -513,6 +513,10 @@ export interface ReservedEventTicketType {
   id: string
   name: string
   price: number | string
+  // Organizer-declared seat cap for this tier (set in the event create form).
+  // The admin builder displays this alongside the painted seat count so we
+  // can see whether the seat map matches the organizer's intent.
+  quantity_total?: number | string
 }
 
 export const reservedEventsAPI = {

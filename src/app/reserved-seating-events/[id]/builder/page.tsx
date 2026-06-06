@@ -1,29 +1,22 @@
 "use client"
 
 /**
- * Reserved seating canvas builder — v2, structured-section model.
+ * Reserved seating builder — v3, Excel-style seat grid.
  *
- * Each section is a declarative grid block (`SectionSpec`) with rows × cols,
- * spacing, default tier, per-cell tier overrides, and per-cell "skip" flags
- * for irregular bottom edges. Individual seats are NEVER stored — they're
- * derived from the section spec at render + save time.
+ * Workflow:
+ *   1. Admin enters total venue rows × cols → empty cell grid materialises.
+ *   2. Admin drags to select a rectangular range of cells.
+ *   3. Range actions: assign to a section (existing or new), mark as stage,
+ *      mark as aisle (empty), mark as label.
+ *   4. Each cell = one seat (or aisle / stage / label). Row letters auto-
+ *      derive from the row index but can be customised per row.
  *
- * Row letters and seat numbers are derived globally from seat Y / X positions
- * via `seatMapModel.deriveLabels`:
- *   - Sections at the same row Y share a row letter (cross-section rows).
- *   - Seats are numbered left-to-right across sections in the same row.
- *   - A large Y-gap (>2.5× median row gap) starts a new zone with its own
- *     label scheme (single letters → double → triple). Matches the
- *     reference layout's A-U (top) / AA-MM (balcony) convention.
- *
- * On save we run derive → label → ship to the existing /seat-map endpoint
- * (no API changes). On hydrate we reverse-engineer SectionSpec[] from the
- * stored event_seats rows so re-edits don't start blank.
+ * Save: deriveLayout() emits the same flat event_seats payload the API has
+ * accepted since the previous builders, so no DB/API change is needed.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import dynamic from "next/dynamic"
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute"
 import { AdminLayout } from "@/components/layout/AdminLayout"
 import { PageLoader } from "@/components/ui/loading"
@@ -36,50 +29,35 @@ import {
   type VisualSeatMapSeat,
 } from "@/lib/apiEndpoints"
 import toast from "react-hot-toast"
+import { ArrowLeft, Plus, Save, Trash2, Undo2 } from "lucide-react"
 import {
-  ArrowLeft,
-  Image as ImageIcon,
-  LayoutGrid,
-  Plus,
-  Save,
-  Square,
-  Trash2,
-  Type as TypeIcon,
-  Undo2,
-  X,
-} from "lucide-react"
-import {
-  deriveSeats,
-  deriveLabels,
-  reverseEngineerSections,
-  type SectionSpec,
-} from "./seatMapModel"
-import type { EditorDecor, Selection } from "./BuilderCanvas"
-
-// react-konva needs the whole canvas subtree mounted atomically — dynamic-
-// importing each sub-component separately leaves the Stage with React
-// placeholders that Konva's reconciler can't resolve. One dynamic import of
-// the whole BuilderCanvas keeps it as a single client-only chunk.
-const BuilderCanvas = dynamic(() => import("./BuilderCanvas"), {
-  ssr: false,
-  loading: () => (
-    <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
-      Loading canvas…
-    </div>
-  ),
-})
-
-// Tier swatch palette — indexed by ticket-type position in `ticket_types`.
-const TIER_PALETTE = ["#7F77DD", "#1D9E75", "#BA7517", "#D85A30", "#185FA5", "#993556", "#6B7280"]
-function tierColor(tierIndex: number) {
-  return TIER_PALETTE[tierIndex % TIER_PALETTE.length] || TIER_PALETTE[0]
-}
-
-const DEFAULT_VIEWBOX = { width: 1600, height: 1200 }
-const DEFAULT_SEAT_SPACING = 22
+  type CellRange,
+  type GridCell,
+  type SeatGrid,
+  type SectionMeta,
+  type StageBlock,
+  addCol,
+  addRow,
+  addStage,
+  deleteSection,
+  deriveLayout,
+  emptyGrid,
+  hydrateGrid,
+  paintRange,
+  removeCol,
+  removeRow,
+  removeStage,
+  updateStage,
+  upsertSection,
+} from "./macroLayoutModel"
+import { SeatGridCanvas } from "./SpreadsheetCanvas"
 
 let _uidCounter = 0
 const uid = (prefix = "id") => `${prefix}_${Date.now().toString(36)}_${(++_uidCounter).toString(36)}`
+
+// Tier swatch palette — must mirror the consumer picker so colors match.
+const TIER_PALETTE = ["#7F77DD", "#1D9E75", "#BA7517", "#D85A30", "#185FA5", "#993556", "#6B7280"]
+function tierColor(i: number) { return TIER_PALETTE[i % TIER_PALETTE.length] || TIER_PALETTE[0] }
 
 // ---------------------------------------------------------------------------
 // Page wrapper — auth + layout
@@ -105,87 +83,41 @@ function BuilderInner() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
-  // Canvas state — sections + decor are the source of truth. Seats are
-  // derived for rendering and save; admin never edits a seat list directly.
-  const [sections, setSections] = useState<SectionSpec[]>([])
-  const [decor, setDecor] = useState<EditorDecor[]>([])
-  const [selection, setSelection] = useState<Selection>(null)
-  const [viewbox, setViewbox] = useState<{ width: number; height: number }>(DEFAULT_VIEWBOX)
-  const [backgroundUrl, setBackgroundUrl] = useState<string | null>(null)
+  // Grid state. Null until the admin either hydrates an existing map OR
+  // submits the "configure venue size" form on the first visit.
+  const [grid, setGrid] = useState<SeatGrid | null>(null)
+  const [selection, setSelection] = useState<CellRange | null>(null)
+  // Stage selection is mutually exclusive with cell selection — only one
+  // panel shows on the right at a time.
+  const [selectedStageId, setSelectedStageId] = useState<string | null>(null)
   const [lockedSeats, setLockedSeats] = useState(0)
 
-  // Undo history. One snapshot per user mutation — capped at 50.
-  const [history, setHistory] = useState<Array<{ sections: SectionSpec[]; decor: EditorDecor[] }>>([])
+  // Undo history — snapshot of the previous grid per mutation, capped at 50.
+  const [history, setHistory] = useState<SeatGrid[]>([])
   const [dirty, setDirty] = useState(false)
 
-  const pushHistory = useCallback(() => {
+  const updateGrid = useCallback((next: SeatGrid) => {
     setHistory(h => {
-      const next = h.length >= 50 ? h.slice(1) : h.slice()
-      next.push({ sections, decor })
-      return next
+      if (!grid) return h
+      const trimmed = h.length >= 50 ? h.slice(1) : h.slice()
+      trimmed.push(grid)
+      return trimmed
     })
+    setGrid(next)
     setDirty(true)
-  }, [sections, decor])
+  }, [grid])
 
   const undo = useCallback(() => {
     setHistory(h => {
       if (h.length === 0) return h
       const prev = h[h.length - 1]
-      setSections(prev.sections)
-      setDecor(prev.decor)
+      setGrid(prev)
       setSelection(null)
       return h.slice(0, -1)
     })
   }, [])
 
-  // Modals
-  const [showAddSection, setShowAddSection] = useState(false)
-
-  // Background upload
-  const [bgUploading, setBgUploading] = useState(false)
-  const bgFileInputRef = useRef<HTMLInputElement | null>(null)
-  const uploadBackground = useCallback(async (file: File) => {
-    setBgUploading(true)
-    try {
-      const res = await reservedEventsAPI.uploadLayoutDoc(file)
-      const url = res?.data?.data?.url
-      if (!url) throw new Error("Upload returned no URL")
-      pushHistory()
-      setBackgroundUrl(url)
-      toast.success("Background uploaded")
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: string } }, message?: string })?.response?.data?.message
-        || (err as Error)?.message
-        || "Upload failed"
-      toast.error(msg)
-    } finally {
-      setBgUploading(false)
-    }
-  }, [pushHistory])
-  const clearBackground = useCallback(() => {
-    if (!backgroundUrl) return
-    pushHistory()
-    setBackgroundUrl(null)
-  }, [backgroundUrl, pushHistory])
-
-  // Resize the canvas viewport — the white rectangle sections sit on. Used
-  // to match the canvas shape to the actual venue (wide arena vs tall
-  // auditorium). Clamped to a sensible range; min keeps a usable area, max
-  // avoids runaway memory in Konva when zoomed out.
-  const setViewboxDim = useCallback((axis: "width" | "height", value: number) => {
-    const v = Math.max(200, Math.min(10000, Math.round(value) || 0))
-    if (viewbox[axis] === v) return
-    pushHistory()
-    setViewbox(prev => ({ ...prev, [axis]: v }))
-  }, [viewbox, pushHistory])
-
-  // Stage transform — pan + zoom. stageRef lives inside BuilderCanvas.
-  const [stagePos, setStagePos] = useState({ x: 0, y: 0 })
-  const [stageScale, setStageScale] = useState(1)
-  const [stageSize, setStageSize] = useState({ width: 1200, height: 700 })
-  const containerRef = useRef<HTMLDivElement | null>(null)
-
-  // ----- Load event + ticket types + reverse-engineer sections ----------
+  // ----- Load event + ticket types + hydrate grid -------------------------
 
   useEffect(() => {
     if (!eventId) return
@@ -205,36 +137,16 @@ function BuilderInner() {
 
         const sm = smRes?.data?.data
         if (sm) {
-          if (sm.layout) {
-            setViewbox({
-              width:  Number(sm.layout.viewbox_width)  || DEFAULT_VIEWBOX.width,
-              height: Number(sm.layout.viewbox_height) || DEFAULT_VIEWBOX.height,
-            })
-            setBackgroundUrl(sm.layout.background_image_url || null)
-            const decorHydrated: EditorDecor[] = (sm.layout.decor || [])
-              .filter(d => d.kind === "rect" || d.kind === "text")
-              .map((d, i) => ({
-                id: d.id || uid("decor"),
-                kind: d.kind as "rect" | "text",
-                x: Number(d.x ?? 0),
-                y: Number(d.y ?? 0),
-                width:  d.width  != null ? Number(d.width)  : undefined,
-                height: d.height != null ? Number(d.height) : undefined,
-                label: d.label || (d.kind === "rect" ? `STAGE_${i}` : "Label"),
-                fill:  d.fill  || undefined,
-                color: d.color || undefined,
-              }))
-            setDecor(decorHydrated)
+          const apiSeats = sm.seats || []
+          const apiDecor = sm.layout?.decor || []
+          if (apiSeats.length > 0 || apiDecor.length > 0) {
+            setGrid(hydrateGrid(apiSeats, apiDecor, uid))
           }
-          // Reverse-engineer SectionSpec[] from the flat event_seats list.
-          const recovered = reverseEngineerSections(sm.seats || [], uid)
-          setSections(recovered)
-          const locked = (sm.seats || []).filter(
+          const locked = apiSeats.filter(
             s => s.status === "held" || s.status === "booked",
           ).length
           setLockedSeats(locked)
         }
-        // Hydration is the baseline — nothing to undo yet, nothing dirty.
         setHistory([])
         setDirty(false)
       } catch {
@@ -246,28 +158,8 @@ function BuilderInner() {
     return () => { cancelled = true }
   }, [eventId])
 
-  // Stage size — measured once the canvas container is mounted (PageLoader
-  // swap pulls the container into the DOM, ResizeObserver picks up the rest).
-  useEffect(() => {
-    if (loading) return
-    const el = containerRef.current
-    if (!el) return
-    const update = () => {
-      const w = el.clientWidth
-      const h = el.clientHeight
-      if (w > 0 && h > 0) setStageSize({ width: w, height: h })
-    }
-    update()
-    const ro = new ResizeObserver(update)
-    ro.observe(el)
-    window.addEventListener("resize", update)
-    return () => { ro.disconnect(); window.removeEventListener("resize", update) }
-  }, [loading])
+  // ----- Keyboard: Ctrl/Cmd+Z = undo --------------------------------------
 
-  // Keyboard shortcuts. Delete on a section removes the section; on a decor
-  // it removes the decor; on a derived seat it toggles skip. Cmd/Ctrl+Z
-  // pops one history entry.
-  const removeSectionRef = useRef<((id: string) => void) | null>(null)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null
@@ -276,230 +168,52 @@ function BuilderInner() {
         if (inField) return
         e.preventDefault()
         undo()
-        return
-      }
-      if (e.key !== "Delete" && e.key !== "Backspace") return
-      if (inField || !selection) return
-      e.preventDefault()
-      if (selection.kind === "section") {
-        removeSectionRef.current?.(selection.id)
-        return
-      }
-      if (selection.kind === "decor") {
-        pushHistory()
-        setDecor(d => d.filter(x => x.id !== selection.id))
-        setSelection(null)
-      }
-      if (selection.kind === "seat") {
-        // Parse "sectionId#r#c" and toggle skip.
-        const [sectionId, rStr, cStr] = selection.derivedId.split("#")
-        const r = Number(rStr); const c = Number(cStr)
-        if (!Number.isFinite(r) || !Number.isFinite(c)) return
-        pushHistory()
-        setSections(arr => arr.map(s => {
-          if (s.id !== sectionId) return s
-          const key = `${r},${c}`
-          const next = { ...s.skipSeats }
-          next[key] = true
-          return { ...s, skipSeats: next }
-        }))
-        setSelection(null)
       }
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [selection, undo, pushHistory])
-
-  // ----- Section mutations ------------------------------------------------
-
-  const addSection = useCallback((opts: {
-    name: string
-    rows: number
-    cols: number
-    spacing: number
-    ticket_type_id: string
-  }) => {
-    // Drop new section at the canvas viewport centre.
-    const center = stageToCanvas({
-      x: stageSize.width / 2,
-      y: stageSize.height / 2,
-    }, stagePos, stageScale)
-    const blockWidth  = (opts.cols - 1) * opts.spacing
-    const blockHeight = (opts.rows - 1) * opts.spacing
-    const spec: SectionSpec = {
-      id: uid("section"),
-      name: opts.name,
-      x: Math.round(center.x - blockWidth  / 2),
-      y: Math.round(center.y - blockHeight / 2),
-      rows: opts.rows,
-      cols: opts.cols,
-      rowSpacing: opts.spacing,
-      seatSpacing: opts.spacing,
-      defaultTicketTypeId: opts.ticket_type_id,
-      tierOverrides: {},
-      skipSeats: {},
-    }
-    pushHistory()
-    setSections(prev => [...prev, spec])
-    toast.success(`Added section "${opts.name}" (${opts.rows * opts.cols} seats)`)
-  }, [stagePos, stageScale, stageSize, pushHistory])
-
-  const moveSection = useCallback((sectionId: string, dx: number, dy: number) => {
-    if (dx === 0 && dy === 0) return
-    pushHistory()
-    setSections(arr => arr.map(s =>
-      s.id === sectionId
-        ? { ...s, x: Math.round(s.x + dx), y: Math.round(s.y + dy) }
-        : s))
-  }, [pushHistory])
-
-  // Section resize via Konva Transformer scales the row + seat spacing
-  // (rows/cols unchanged). Translation is baked into x/y.
-  const resizeSection = useCallback((
-    sectionId: string,
-    nx: number, ny: number,
-    sx: number, sy: number,
-  ) => {
-    pushHistory()
-    setSections(arr => arr.map(s => {
-      if (s.id !== sectionId) return s
-      return {
-        ...s,
-        x: Math.round(nx),
-        y: Math.round(ny),
-        rowSpacing:  Math.max(6, Math.round(s.rowSpacing  * sy)),
-        seatSpacing: Math.max(6, Math.round(s.seatSpacing * sx)),
-      }
-    }))
-  }, [pushHistory])
-
-  const removeSection: (id: string) => void = useCallback((sectionId: string) => {
-    const target = sections.find(s => s.id === sectionId)
-    if (!target) return
-    const seatCount = target.rows * target.cols - Object.keys(target.skipSeats).length
-    const ok = typeof window === "undefined"
-      ? true
-      : window.confirm(`Remove section "${target.name}" (${seatCount} seat${seatCount === 1 ? "" : "s"})?`)
-    if (!ok) return
-    pushHistory()
-    setSections(arr => arr.filter(s => s.id !== sectionId))
-    setSelection(sel => (sel?.kind === "section" && sel.id === sectionId) ? null : sel)
-    toast.success(`Removed section "${target.name}"`)
-  }, [sections, pushHistory])
-  useEffect(() => { removeSectionRef.current = removeSection }, [removeSection])
-
-  const updateSection = useCallback((sectionId: string, patch: Partial<SectionSpec>) => {
-    pushHistory()
-    setSections(arr => arr.map(s => s.id === sectionId ? { ...s, ...patch } : s))
-  }, [pushHistory])
-
-  // Toggle a cell's "skip" flag. Double-clicked on canvas or via Delete on
-  // a selected seat cell — useful for carving irregular bottom edges.
-  const toggleSkipSeat = useCallback((sectionId: string, r: number, c: number) => {
-    pushHistory()
-    setSections(arr => arr.map(s => {
-      if (s.id !== sectionId) return s
-      const key = `${r},${c}`
-      const next = { ...s.skipSeats }
-      if (next[key]) delete next[key]
-      else next[key] = true
-      return { ...s, skipSeats: next }
-    }))
-  }, [pushHistory])
-
-  // Override a cell's ticket tier. `tierId` = "" means clear the override.
-  const setCellTier = useCallback((sectionId: string, r: number, c: number, tierId: string) => {
-    pushHistory()
-    setSections(arr => arr.map(s => {
-      if (s.id !== sectionId) return s
-      const key = `${r},${c}`
-      const next = { ...s.tierOverrides }
-      if (!tierId || tierId === s.defaultTicketTypeId) delete next[key]
-      else next[key] = tierId
-      return { ...s, tierOverrides: next }
-    }))
-  }, [pushHistory])
-
-  // ----- Decor mutations --------------------------------------------------
-
-  const addDecor = useCallback((kind: "rect" | "text", label = "") => {
-    const center = stageToCanvas({
-      x: stageSize.width / 2,
-      y: stageSize.height / 2,
-    }, stagePos, stageScale)
-    const id = uid("decor")
-    pushHistory()
-    if (kind === "rect") {
-      setDecor(prev => [...prev, {
-        id, kind: "rect",
-        x: Math.round(center.x - 200), y: Math.round(center.y - 30),
-        width: 400, height: 60,
-        label: label || "STAGE",
-        fill: "#111827", color: "#FFFFFF",
-      }])
-    } else {
-      setDecor(prev => [...prev, {
-        id, kind: "text",
-        x: Math.round(center.x), y: Math.round(center.y),
-        label: label || "LABEL",
-        color: "#374151",
-      }])
-    }
-    setSelection({ kind: "decor", id })
-  }, [stagePos, stageScale, stageSize, pushHistory])
-
-  const handleDecorMove = useCallback((decorId: string, x: number, y: number) => {
-    pushHistory()
-    setDecor(arr => arr.map(d => d.id === decorId ? { ...d, x, y } : d))
-  }, [pushHistory])
+  }, [undo])
 
   // ----- Save -------------------------------------------------------------
 
   const save = useCallback(async () => {
-    if (!eventId || !event) return
-    // Derive seats + labels right before save so the API receives a flat
-    // event_seats payload with row_label and seat_number computed from the
-    // current visual positions.
-    const derived = deriveSeats(sections)
-    if (derived.length === 0) {
-      toast.error("Add at least one section before saving.")
+    if (!eventId || !event || !grid) return
+    const derived = deriveLayout(grid)
+    if (derived.seats.length === 0) {
+      toast.error("Add at least one seat before saving.")
       return
     }
-    const orphans = derived.filter(s => !s.ticketTypeId)
+    const orphans = derived.seats.filter(s => !s.ticket_type_id)
     if (orphans.length > 0) {
       toast.error(`${orphans.length} seat(s) have no ticket type assigned.`)
       return
     }
-    const labels = deriveLabels(derived)
     setSaving(true)
     try {
       const payload: VisualSeatMapPayload = {
-        viewbox_width:  viewbox.width,
-        viewbox_height: viewbox.height,
-        background_image_url: backgroundUrl,
-        decor: decor.map<VisualSeatMapDecor>(d => ({
-          id: d.id, kind: d.kind,
+        viewbox_width:  derived.viewbox.width,
+        viewbox_height: derived.viewbox.height,
+        background_image_url: null,
+        decor: derived.decor.map<VisualSeatMapDecor>(d => ({
+          kind: d.kind,
           x: d.x, y: d.y,
           width: d.width, height: d.height,
           label: d.label, fill: d.fill, color: d.color,
         })),
-        seats: derived.map<VisualSeatMapSeat>(s => {
-          const lab = labels[s.id]
-          return {
-            section: s.sectionName,
-            row_label: lab?.row_label || "?",
-            seat_number: lab?.seat_number || "?",
-            seat_label: `${lab?.row_label || "?"}-${lab?.seat_number || "?"}`,
-            x: s.x,
-            y: s.y,
-            ticket_type_id: s.ticketTypeId,
-            seat_type: "standard",
-          }
-        }),
+        seats: derived.seats.map<VisualSeatMapSeat>(s => ({
+          section: s.section,
+          row_label: s.row_label,
+          seat_number: s.seat_number,
+          seat_label: s.seat_label,
+          x: s.x,
+          y: s.y,
+          ticket_type_id: s.ticket_type_id,
+          seat_type: "standard",
+        })),
       }
       const res = await reservedEventsAPI.buildSeatMap(eventId, payload)
       const out = res?.data?.data
-      toast.success(`Saved (${out?.seats_created ?? derived.length} seats)`)
+      toast.success(`Saved (${out?.seats_created ?? derived.seats.length} seats)`)
       setDirty(false)
       setHistory([])
       router.push("/reserved-seating-events")
@@ -511,716 +225,305 @@ function BuilderInner() {
     } finally {
       setSaving(false)
     }
-  }, [eventId, event, sections, decor, viewbox, backgroundUrl, router])
-
-  const goBack = useCallback(() => {
-    const targetUrl = "/reserved-seating-events"
-    if (!dirty || sections.length === 0) {
-      router.push(targetUrl)
-      return
-    }
-    if (lockedSeats > 0) {
-      const ok = window.confirm(
-        `Can't save — ${lockedSeats} seat${lockedSeats === 1 ? "" : "s"} held/booked. Leave without saving?`,
-      )
-      if (ok) router.push(targetUrl)
-      return
-    }
-    save()
-  }, [dirty, sections.length, lockedSeats, router, save])
+  }, [eventId, event, grid, router])
 
   // ----- Render -----------------------------------------------------------
 
   if (loading) return <PageLoader />
   if (!event)  return <div className="p-8 text-center text-muted-foreground">Event not found.</div>
 
+  // First-visit setup — admin enters total venue rows × cols.
+  if (!grid) {
+    return (
+      <SetupScreen
+        event={event}
+        onCancel={() => router.push("/reserved-seating-events")}
+        onSubmit={(rows, cols) => {
+          const fresh = emptyGrid()
+          // Replace defaults with user-chosen dimensions.
+          const cells: GridCell[][] = []
+          for (let r = 0; r < rows; r++) {
+            cells.push(Array.from({ length: cols }, () => ({ kind: "empty" }) as GridCell))
+          }
+          setGrid({ ...fresh, rows, cols, cells })
+        }}
+      />
+    )
+  }
+
   const tierIndexById = (id: string) => ticketTypes.findIndex(t => t.id === id)
-  const totalSeats = sections.reduce(
-    (sum, s) => sum + (s.rows * s.cols - Object.keys(s.skipSeats).length),
-    0,
-  )
+  const seatColor = (id: string) => tierColor(tierIndexById(id))
+
+  const sectionList = Object.values(grid.sections)
+  // Walk every cell once and compute both per-section and per-tier counts.
+  // A seat's effective tier = explicit override on the cell, else the
+  // owning section's default tier.
+  const seatsPerSection: Record<string, number> = {}
+  const seatsPerTier: Record<string, number> = {}
+  for (const row of grid.cells) {
+    for (const cell of row) {
+      if (cell.kind !== "seat") continue
+      seatsPerSection[cell.sectionId] = (seatsPerSection[cell.sectionId] ?? 0) + 1
+      const sec = grid.sections[cell.sectionId]
+      const tier = cell.tierOverride ?? sec?.defaultTicketTypeId ?? ""
+      if (tier) seatsPerTier[tier] = (seatsPerTier[tier] ?? 0) + 1
+    }
+  }
+  const totalSeats = Object.values(seatsPerSection).reduce((a, b) => a + b, 0)
 
   return (
-    <div className="flex flex-col h-[calc(100vh-80px)]">
+    <div className="flex h-[calc(100vh-80px)] flex-col">
       {/* Top bar */}
-      <div className="border-b bg-background flex items-center gap-3 px-4 py-2.5">
+      <div className="flex items-center gap-3 border-b bg-background px-4 py-2.5">
         <button
           type="button"
-          onClick={goBack}
-          title={dirty ? "Save and go back" : "Back"}
+          onClick={() => router.push("/reserved-seating-events")}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
-          <ArrowLeft className="h-4 w-4" />
-          {dirty && sections.length > 0 ? "Save & back" : "Back"}
+          <ArrowLeft className="h-4 w-4" /> Back
         </button>
         <div className="h-5 w-px bg-border" />
-        <div className="flex-1 min-w-0">
-          <div className="font-semibold truncate flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 truncate font-semibold">
             <span className="truncate">{event.title}</span>
             {dirty && <span className="shrink-0 text-[10px] uppercase tracking-wider text-amber-600 dark:text-amber-400">Unsaved</span>}
           </div>
-          <div className="text-xs text-muted-foreground truncate">
-            {event.venue_name ?? "Venue TBA"} · {sections.length} section{sections.length === 1 ? "" : "s"} · {totalSeats} seat{totalSeats === 1 ? "" : "s"} · {decor.length} decor item{decor.length === 1 ? "" : "s"}
+          <div className="truncate text-xs text-muted-foreground">
+            {event.venue_name ?? "Venue TBA"} · {grid.rows} × {grid.cols} grid · {totalSeats} seat{totalSeats === 1 ? "" : "s"} · {sectionList.length} section{sectionList.length === 1 ? "" : "s"}
           </div>
         </div>
         {lockedSeats > 0 && (
-          <div
-            className="hidden md:inline-flex items-center gap-1.5 rounded-md bg-amber-100 dark:bg-amber-500/15 px-3 py-1.5 text-xs font-medium text-amber-800 dark:text-amber-300"
-            title="Saving will fail until these are released. Wait for hold expiry or refund the bookings."
-          >
-            {lockedSeats} seat{lockedSeats === 1 ? "" : "s"} held/booked — save will refuse
+          <div className="hidden items-center gap-1.5 rounded-md bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-800 md:inline-flex dark:bg-amber-500/15 dark:text-amber-300" title="Saving will fail until these are released.">
+            {lockedSeats} seat{lockedSeats === 1 ? "" : "s"} held/booked
           </div>
         )}
+        <button
+          type="button"
+          onClick={() => {
+            if (!grid) return
+            const stage: StageBlock = {
+              id: uid("stage"),
+              x: Math.max(0, Math.floor(grid.cols / 2) - 3),
+              y: 0,
+              width: 6,
+              height: 1.5,
+              label: "STAGE",
+            }
+            updateGrid(addStage(grid, stage))
+            setSelectedStageId(stage.id)
+            setSelection(null)
+          }}
+          title="Add a custom-sized stage"
+          className="inline-flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm hover:bg-accent"
+        >
+          <Plus className="h-4 w-4" /> Add stage
+        </button>
         <button
           type="button"
           onClick={undo}
           disabled={history.length === 0}
           title="Undo (Ctrl/Cmd+Z)"
-          className="inline-flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed"
+          className="inline-flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
         >
           <Undo2 className="h-4 w-4" /> Undo
         </button>
         <button
           type="button"
           onClick={save}
-          disabled={saving || sections.length === 0 || lockedSeats > 0}
+          disabled={saving || totalSeats === 0 || lockedSeats > 0}
           className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
         >
           <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save seat map"}
         </button>
       </div>
 
-      {/* Body — toolbar | canvas | inspector */}
-      <div className="flex-1 flex min-h-0">
-        {/* Toolbar */}
-        <aside className="w-56 border-r bg-muted/30 flex flex-col gap-1 p-2 text-sm overflow-y-auto">
-          <button
-            type="button"
-            onClick={() => setShowAddSection(true)}
-            className="inline-flex items-center gap-2 rounded px-3 py-2 hover:bg-accent text-left"
-          >
-            <LayoutGrid className="h-4 w-4" /> Add section
-          </button>
-          <button
-            type="button"
-            onClick={() => addDecor("rect", "STAGE")}
-            className="inline-flex items-center gap-2 rounded px-3 py-2 hover:bg-accent text-left"
-          >
-            <Square className="h-4 w-4" /> Add stage / decor rect
-          </button>
-          <button
-            type="button"
-            onClick={() => addDecor("text", "Label")}
-            className="inline-flex items-center gap-2 rounded px-3 py-2 hover:bg-accent text-left"
-          >
-            <TypeIcon className="h-4 w-4" /> Add text label
-          </button>
-
-          <div className="mt-4 px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Background
-          </div>
-          <div className="px-2 flex flex-col gap-1">
-            <input
-              ref={bgFileInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              aria-label="Background image"
-              onChange={e => {
-                const f = e.target.files?.[0]
-                if (f) uploadBackground(f)
-                if (e.target) e.target.value = ""
-              }}
-            />
-            <button
-              type="button"
-              onClick={() => bgFileInputRef.current?.click()}
-              disabled={bgUploading}
-              className="inline-flex items-center gap-2 rounded px-3 py-2 hover:bg-accent text-left disabled:opacity-50"
-            >
-              <ImageIcon className="h-4 w-4" />
-              {bgUploading ? "Uploading…" : backgroundUrl ? "Replace background" : "Upload background"}
-            </button>
-            {backgroundUrl && (
-              <button
-                type="button"
-                onClick={clearBackground}
-                className="inline-flex items-center gap-2 rounded px-3 py-2 hover:bg-accent text-left text-destructive"
-              >
-                <X className="h-4 w-4" /> Clear background
-              </button>
-            )}
-          </div>
-
-          {/* Canvas viewport size — match the white area to the actual
-              venue shape. Larger canvas = more room to place sections;
-              the SVG/Konva renderer scales to fit on screen regardless. */}
-          <div className="mt-4 px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Canvas size
-          </div>
-          <div className="px-2 grid grid-cols-2 gap-2">
-            <Field label="Width">
-              <input
-                aria-label="Canvas width"
-                type="number" min={200} max={10000} step={50}
-                value={viewbox.width}
-                onChange={e => setViewboxDim("width", Number(e.target.value))}
-                className="w-full px-2 py-1 text-sm border rounded bg-background"
-              />
-            </Field>
-            <Field label="Height">
-              <input
-                aria-label="Canvas height"
-                type="number" min={200} max={10000} step={50}
-                value={viewbox.height}
-                onChange={e => setViewboxDim("height", Number(e.target.value))}
-                className="w-full px-2 py-1 text-sm border rounded bg-background"
-              />
-            </Field>
-          </div>
-
-          <div className="mt-4 px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Ticket tiers
-          </div>
-          <div className="px-2 flex flex-col gap-1">
-            {ticketTypes.length === 0 ? (
-              <div className="px-1 text-xs text-muted-foreground">
-                No ticket types yet — add them on the event before building the seat map.
-              </div>
-            ) : ticketTypes.map((tt, i) => (
-              <div key={tt.id} className="flex items-center gap-2 text-xs px-1 py-1">
-                <span
-                  aria-hidden="true"
-                  className="inline-block w-3 h-3 rounded-full shrink-0"
-                  style={{ background: tierColor(i) }}
-                />
-                <span className="flex-1 truncate">{tt.name}</span>
-                <span className="text-muted-foreground">{Number(tt.price).toLocaleString()}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-auto px-3 py-2 text-[11px] text-muted-foreground border-t border-border/50 space-y-0.5">
-            <div>Scroll: zoom · Drag empty: pan</div>
-            <div>Click section: select + drag · Click seat: select</div>
-            <div>Double-click seat: skip / unskip</div>
-            <div>Ctrl/Cmd+Z: undo</div>
-          </div>
-        </aside>
-
-        {/* Canvas */}
-        <div
-          ref={containerRef}
-          className="flex-1 relative bg-[radial-gradient(circle_at_1px_1px,_rgba(0,0,0,0.06)_1px,_transparent_0)] [background-size:20px_20px]"
-        >
-          <BuilderCanvas
-            viewbox={viewbox}
-            stageSize={stageSize}
-            stagePos={stagePos}
-            stageScale={stageScale}
-            setStagePos={setStagePos}
-            setStageScale={setStageScale}
-            sections={sections}
-            decor={decor}
-            backgroundUrl={backgroundUrl}
+      {/* Body — canvas | inspector */}
+      <div className="flex min-h-0 flex-1">
+        <div className="min-w-0 flex-1 overflow-hidden bg-muted/20">
+          <SeatGridCanvas
+            grid={grid}
             selection={selection}
-            setSelection={setSelection}
-            seatColor={(id) => tierColor(tierIndexById(id))}
-            onSectionMove={moveSection}
-            onSectionResize={resizeSection}
-            onDecorMove={handleDecorMove}
-            onToggleSkipSeat={toggleSkipSeat}
+            onSelectionChange={(r) => {
+              setSelection(r)
+              if (r) setSelectedStageId(null)
+            }}
+            selectedStageId={selectedStageId}
+            onStageSelect={(id) => {
+              setSelectedStageId(id)
+              if (id) setSelection(null)
+            }}
+            onStageMove={(id, dx, dy) => {
+              const s = grid.stages.find(x => x.id === id)
+              if (!s) return
+              const nx = Math.max(0, Math.min(grid.cols - s.width, Math.round((s.x + dx) * 4) / 4))
+              const ny = Math.max(0, Math.min(grid.rows - s.height, Math.round((s.y + dy) * 4) / 4))
+              if (nx === s.x && ny === s.y) return
+              updateGrid(updateStage(grid, id, { x: nx, y: ny }))
+            }}
+            seatColor={seatColor}
           />
-
-          <button
-            type="button"
-            onClick={() => { setStagePos({ x: 0, y: 0 }); setStageScale(1) }}
-            className="absolute bottom-3 left-3 rounded-md bg-background border px-2.5 py-1 text-xs shadow-sm hover:bg-accent"
-          >
-            Reset view
-          </button>
         </div>
 
-        {/* Inspector */}
-        <aside className="w-72 border-l bg-muted/30 flex flex-col overflow-y-auto">
-          {selection?.kind === "section" ? (
-            <SectionInspector
-              section={sections.find(s => s.id === selection.id)!}
-              ticketTypes={ticketTypes}
-              onPatch={(patch) => updateSection(selection.id, patch)}
-              onRemove={() => removeSection(selection.id)}
-            />
-          ) : selection?.kind === "decor" ? (
-            <DecorInspector
-              decor={decor.find(d => d.id === selection.id)!}
-              onChange={patch => {
-                pushHistory()
-                setDecor(arr => arr.map(d => d.id === selection.id ? { ...d, ...patch } : d))
-              }}
-              onDelete={() => {
-                pushHistory()
-                setDecor(arr => arr.filter(d => d.id !== selection.id))
-                setSelection(null)
-              }}
-            />
-          ) : selection?.kind === "seat" ? (
-            <SeatCellInspector
-              derivedId={selection.derivedId}
-              sections={sections}
-              ticketTypes={ticketTypes}
-              onToggleSkip={(sid, r, c) => toggleSkipSeat(sid, r, c)}
-              onSetTier={(sid, r, c, tier) => setCellTier(sid, r, c, tier)}
-            />
-          ) : (
-            <div className="p-4 text-sm text-muted-foreground">
-              Click a section, seat, or decor item to edit it.
-            </div>
-          )}
+        <aside className="flex w-80 flex-col overflow-y-auto border-l bg-muted/30">
+          <RightPanel
+            grid={grid}
+            ticketTypes={ticketTypes}
+            selection={selection}
+            selectedStageId={selectedStageId}
+            sectionList={sectionList}
+            seatsPerSection={seatsPerSection}
+            onClearSelection={() => setSelection(null)}
+            onClearStageSelection={() => setSelectedStageId(null)}
+            onPaintRange={(paint) => {
+              if (!selection) return
+              updateGrid(paintRange(grid, selection, paint))
+            }}
+            onPaintWithSectionUpsert={(section, paint) => {
+              if (!selection) return
+              const withSection = upsertSection(grid, section)
+              const painted = paintRange(withSection, selection, paint)
+              updateGrid(painted)
+            }}
+            onDeleteSection={(sectionId) => {
+              updateGrid(deleteSection(grid, sectionId))
+            }}
+            onStagePatch={(id, patch) => updateGrid(updateStage(grid, id, patch))}
+            onStageRemove={(id) => {
+              updateGrid(removeStage(grid, id))
+              setSelectedStageId(null)
+            }}
+            onPatchGrid={(next) => updateGrid(next)}
+            onAddRow={(at, side) => updateGrid(addRow(grid, at, side))}
+            onRemoveRow={(at) => updateGrid(removeRow(grid, at))}
+            onAddCol={(at, side) => updateGrid(addCol(grid, at, side))}
+            onRemoveCol={(at) => updateGrid(removeCol(grid, at))}
+          />
 
-          <div className="mt-auto border-t p-3">
-            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-              Sections in this map
+          <div className="mt-auto space-y-1 border-t p-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Ticket tiers
             </div>
-            <SectionSummary
-              sections={sections}
-              ticketTypes={ticketTypes}
-              onSelect={(id) => setSelection({ kind: "section", id })}
-              onRemove={removeSection}
-            />
+            {ticketTypes.length === 0 ? (
+              <div className="text-xs text-muted-foreground">
+                Add ticket types on the event first.
+              </div>
+            ) : ticketTypes.map((tt, i) => {
+              const adminCount = seatsPerTier[tt.id] ?? 0
+              const organizerCap = Number(tt.quantity_total ?? 0)
+              const hasCap = Number.isFinite(organizerCap) && organizerCap > 0
+              // Highlight when the painted seat count doesn't match the
+              // organizer's declared cap — too many or too few.
+              const mismatch = hasCap && adminCount !== organizerCap
+              return (
+                <div key={tt.id} className="space-y-0.5 py-0.5 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span
+                      aria-hidden="true"
+                      className="inline-block h-3 w-3 shrink-0 rounded-full"
+                      style={{ background: tierColor(i) }}
+                    />
+                    <span className="flex-1 truncate font-medium text-foreground">{tt.name}</span>
+                    <span className="shrink-0 text-muted-foreground">
+                      LKR {Number(tt.price).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 pl-5 text-[11px] tabular-nums">
+                    <span className={mismatch ? "text-amber-600 dark:text-amber-400" : "text-foreground"}>
+                      <span className="font-semibold">{adminCount}</span> built
+                    </span>
+                    {hasCap && (
+                      <>
+                        <span className="text-muted-foreground/60">/</span>
+                        <span className="text-muted-foreground">
+                          <span className="font-semibold text-foreground">{organizerCap}</span> requested
+                        </span>
+                      </>
+                    )}
+                    {mismatch && (
+                      <span className="ml-auto text-[10px] uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                        {adminCount > organizerCap ? "+over" : "under"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
           </div>
         </aside>
       </div>
-
-      {showAddSection && (
-        <AddSectionModal
-          ticketTypes={ticketTypes}
-          existingNames={sections.map(s => s.name)}
-          onCancel={() => setShowAddSection(false)}
-          onSubmit={opts => { setShowAddSection(false); addSection(opts) }}
-        />
-      )}
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Inspector panels
+// Setup screen — first visit, asks for total venue rows × cols.
 // ---------------------------------------------------------------------------
 
-function SectionInspector({
-  section, ticketTypes, onPatch, onRemove,
+function SetupScreen({
+  event, onSubmit, onCancel,
 }: {
-  section: SectionSpec
-  ticketTypes: ReservedEventTicketType[]
-  onPatch: (patch: Partial<SectionSpec>) => void
-  onRemove: () => void
-}) {
-  // Draft is null while the user isn't actively editing — the displayed value
-  // falls through to `section.name`, so selecting a different section
-  // automatically refreshes the input without a useEffect sync.
-  const [draft, setDraft] = useState<string | null>(null)
-  const draftName = draft ?? section.name
-  const seatCount = section.rows * section.cols - Object.keys(section.skipSeats).length
-
-  return (
-    <div className="p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Section</h3>
-        <button
-          type="button"
-          onClick={onRemove}
-          title="Remove section"
-          className="text-destructive hover:bg-destructive/10 rounded p-1.5"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
-      </div>
-      <Field label="Name">
-        <input
-          aria-label="Section name"
-          value={draftName}
-          onChange={e => setDraft(e.target.value)}
-          onBlur={() => {
-            const trimmed = draftName.trim()
-            if (trimmed && trimmed !== section.name) onPatch({ name: trimmed })
-            setDraft(null)
-          }}
-          onKeyDown={e => {
-            if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur()
-            if (e.key === "Escape") setDraft(null)
-          }}
-          className="w-full px-2 py-1 text-sm border rounded bg-background"
-        />
-      </Field>
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="Rows">
-          <input
-            aria-label="Section rows"
-            type="number" min={1} max={200}
-            value={section.rows}
-            onChange={e => onPatch({ rows: Math.max(1, Number(e.target.value) || 1) })}
-            className="w-full px-2 py-1 text-sm border rounded bg-background"
-          />
-        </Field>
-        <Field label="Cols">
-          <input
-            aria-label="Section cols"
-            type="number" min={1} max={200}
-            value={section.cols}
-            onChange={e => onPatch({ cols: Math.max(1, Number(e.target.value) || 1) })}
-            className="w-full px-2 py-1 text-sm border rounded bg-background"
-          />
-        </Field>
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="Row spacing">
-          <input
-            aria-label="Row spacing"
-            type="number" min={6}
-            value={section.rowSpacing}
-            onChange={e => onPatch({ rowSpacing: Math.max(6, Number(e.target.value) || 6) })}
-            className="w-full px-2 py-1 text-sm border rounded bg-background"
-          />
-        </Field>
-        <Field label="Seat spacing">
-          <input
-            aria-label="Seat spacing"
-            type="number" min={6}
-            value={section.seatSpacing}
-            onChange={e => onPatch({ seatSpacing: Math.max(6, Number(e.target.value) || 6) })}
-            className="w-full px-2 py-1 text-sm border rounded bg-background"
-          />
-        </Field>
-      </div>
-      <Field label="Default ticket type">
-        <select
-          aria-label="Default ticket type"
-          value={section.defaultTicketTypeId}
-          onChange={e => onPatch({ defaultTicketTypeId: e.target.value })}
-          className="w-full px-2 py-1 text-sm border rounded bg-background"
-        >
-          {ticketTypes.map(tt => (
-            <option key={tt.id} value={tt.id}>{tt.name} — {Number(tt.price).toLocaleString()}</option>
-          ))}
-        </select>
-      </Field>
-      <div className="text-xs text-muted-foreground">
-        {seatCount} seat{seatCount === 1 ? "" : "s"} · {Object.keys(section.skipSeats).length} skipped · {Object.keys(section.tierOverrides).length} tier override{Object.keys(section.tierOverrides).length === 1 ? "" : "s"}
-      </div>
-      <p className="text-[11px] text-muted-foreground">
-        Drag the section&rsquo;s outline to move it. Drag a corner handle to
-        scale spacing. Double-click an individual seat on the canvas to skip
-        / unskip it.
-      </p>
-    </div>
-  )
-}
-
-function SeatCellInspector({
-  derivedId, sections, ticketTypes, onToggleSkip, onSetTier,
-}: {
-  derivedId: string
-  sections: SectionSpec[]
-  ticketTypes: ReservedEventTicketType[]
-  onToggleSkip: (sectionId: string, r: number, c: number) => void
-  onSetTier:    (sectionId: string, r: number, c: number, tierId: string) => void
-}) {
-  const [sectionId, rStr, cStr] = derivedId.split("#")
-  const r = Number(rStr); const c = Number(cStr)
-  const section = sections.find(s => s.id === sectionId)
-  if (!section) return <div className="p-4 text-sm text-muted-foreground">Seat no longer exists.</div>
-  const key = `${r},${c}`
-  const isSkipped = !!section.skipSeats[key]
-  const currentTier = section.tierOverrides[key] ?? section.defaultTicketTypeId
-
-  return (
-    <div className="p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Seat</h3>
-      </div>
-      <div className="text-xs text-muted-foreground">
-        {section.name} · row index {r}, col index {c}
-      </div>
-      <Field label="Ticket type">
-        <select
-          aria-label="Seat ticket type"
-          value={currentTier}
-          onChange={e => onSetTier(sectionId, r, c, e.target.value)}
-          className="w-full px-2 py-1 text-sm border rounded bg-background"
-        >
-          {ticketTypes.map(tt => (
-            <option key={tt.id} value={tt.id}>{tt.name} — {Number(tt.price).toLocaleString()}</option>
-          ))}
-        </select>
-      </Field>
-      <button
-        type="button"
-        onClick={() => onToggleSkip(sectionId, r, c)}
-        className="w-full inline-flex items-center justify-center gap-1.5 rounded border px-3 py-2 text-sm hover:bg-accent"
-      >
-        {isSkipped ? "Restore seat" : "Mark missing (skip)"}
-      </button>
-      <p className="text-[11px] text-muted-foreground">
-        Row letters and seat numbers are computed automatically on save based
-        on the seat&rsquo;s visual position — multiple sections at the same row
-        share a letter and seat numbering continues across them.
-      </p>
-    </div>
-  )
-}
-
-function DecorInspector({
-  decor, onChange, onDelete,
-}: {
-  decor: EditorDecor
-  onChange: (patch: Partial<EditorDecor>) => void
-  onDelete: () => void
-}) {
-  return (
-    <div className="p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">{decor.kind === "rect" ? "Stage / Rect" : "Text label"}</h3>
-        <button
-          type="button"
-          onClick={onDelete}
-          title="Remove"
-          className="text-destructive hover:bg-destructive/10 rounded p-1.5"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
-      </div>
-      <Field label="Label">
-        <input
-          aria-label="Decor label"
-          value={decor.label ?? ""}
-          onChange={e => onChange({ label: e.target.value })}
-          className="w-full px-2 py-1 text-sm border rounded bg-background"
-        />
-      </Field>
-      {decor.kind === "rect" && (
-        <div className="grid grid-cols-2 gap-2">
-          <Field label="Width">
-            <input
-              aria-label="Width"
-              type="number" min={20}
-              value={decor.width ?? 200}
-              onChange={e => onChange({ width: Math.max(20, Number(e.target.value)) })}
-              className="w-full px-2 py-1 text-sm border rounded bg-background"
-            />
-          </Field>
-          <Field label="Height">
-            <input
-              aria-label="Height"
-              type="number" min={20}
-              value={decor.height ?? 60}
-              onChange={e => onChange({ height: Math.max(20, Number(e.target.value)) })}
-              className="w-full px-2 py-1 text-sm border rounded bg-background"
-            />
-          </Field>
-        </div>
-      )}
-      <Field label="Fill">
-        <input
-          aria-label="Fill color"
-          type="color"
-          value={decor.fill ?? "#111827"}
-          onChange={e => onChange({ fill: e.target.value })}
-          className="w-full h-8 rounded border"
-        />
-      </Field>
-      <Field label="Text color">
-        <input
-          aria-label="Text color"
-          type="color"
-          value={decor.color ?? "#FFFFFF"}
-          onChange={e => onChange({ color: e.target.value })}
-          className="w-full h-8 rounded border"
-        />
-      </Field>
-    </div>
-  )
-}
-
-function SectionSummary({
-  sections, ticketTypes, onSelect, onRemove,
-}: {
-  sections: SectionSpec[]
-  ticketTypes: ReservedEventTicketType[]
-  onSelect: (id: string) => void
-  onRemove: (id: string) => void
-}) {
-  const rows = useMemo(() => sections.map(s => {
-    const tierIdx = ticketTypes.findIndex(t => t.id === s.defaultTicketTypeId)
-    const count = s.rows * s.cols - Object.keys(s.skipSeats).length
-    return { id: s.id, name: s.name, count, tierIdx }
-  }), [sections, ticketTypes])
-  if (rows.length === 0) {
-    return <div className="text-xs text-muted-foreground">No sections yet.</div>
-  }
-  return (
-    <ul className="space-y-1 text-xs">
-      {rows.map(r => (
-        <li key={r.id} className="group flex items-center gap-2 rounded px-1 py-0.5 hover:bg-accent">
-          <span
-            aria-hidden="true"
-            className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
-            style={{ background: tierColor(r.tierIdx) }}
-          />
-          <button
-            type="button"
-            onClick={() => onSelect(r.id)}
-            title="Select section"
-            className="flex-1 min-w-0 text-left truncate"
-          >
-            {r.name}
-          </button>
-          <span className="text-muted-foreground tabular-nums">{r.count}</span>
-          <button
-            type="button"
-            onClick={() => onRemove(r.id)}
-            title="Remove section"
-            className="opacity-0 group-hover:opacity-100 text-destructive hover:bg-destructive/10 rounded p-1 transition-opacity"
-          >
-            <Trash2 className="h-3 w-3" />
-          </button>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">{label}</span>
-      {children}
-    </label>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Add Section modal
-// ---------------------------------------------------------------------------
-
-function AddSectionModal({
-  ticketTypes, existingNames, onCancel, onSubmit,
-}: {
-  ticketTypes: ReservedEventTicketType[]
-  existingNames: string[]
+  event: ReservedEvent
+  onSubmit: (rows: number, cols: number) => void
   onCancel: () => void
-  onSubmit: (opts: { name: string; rows: number; cols: number; spacing: number; ticket_type_id: string }) => void
 }) {
-  const [name, setName] = useState("")
-  const [rows, setRows] = useState(8)
-  const [cols, setCols] = useState(12)
-  const [spacing, setSpacing] = useState(DEFAULT_SEAT_SPACING)
-  const [ticketTypeId, setTicketTypeId] = useState(ticketTypes[0]?.id ?? "")
-
-  const submit = () => {
-    if (!name.trim()) { toast.error("Section name required"); return }
-    if (!ticketTypeId) { toast.error("Pick a ticket type"); return }
-    if (rows < 1 || cols < 1) { toast.error("Rows and cols must be positive"); return }
-    onSubmit({
-      name: name.trim(),
-      rows, cols, spacing,
-      ticket_type_id: ticketTypeId,
-    })
-  }
+  const [rows, setRows] = useState(20)
+  const [cols, setCols] = useState(24)
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-background rounded-lg w-full max-w-md shadow-xl">
-        <div className="flex items-center justify-between px-5 py-3 border-b">
-          <h3 className="font-semibold">Add section</h3>
+    <div className="flex h-[calc(100vh-80px)] items-center justify-center bg-muted/10 p-6">
+      <div className="w-full max-w-md space-y-5 rounded-2xl border bg-card p-6 shadow-sm">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            New seat map
+          </div>
+          <h1 className="text-lg font-semibold text-foreground">{event.title}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Enter the total rows and columns of your venue. You can change
+            this later by adding or removing rows / columns on the grid.
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block space-y-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Rows
+            </span>
+            <input
+              aria-label="Total rows"
+              type="number"
+              min={1} max={200}
+              value={rows}
+              onChange={e => setRows(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}
+              className="w-full rounded border bg-background px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Columns
+            </span>
+            <input
+              aria-label="Total columns"
+              type="number"
+              min={1} max={200}
+              value={cols}
+              onChange={e => setCols(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}
+              className="w-full rounded border bg-background px-3 py-2 text-sm"
+            />
+          </label>
+        </div>
+        <div className="flex items-center justify-between gap-2">
           <button
             type="button"
             onClick={onCancel}
-            title="Close"
-            className="p-1 rounded hover:bg-accent"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="p-5 space-y-3">
-          <Field label="Section name">
-            <input
-              aria-label="Section name"
-              autoFocus
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder="e.g. Orchestra Left"
-              list="existing-sections"
-              className="w-full px-3 py-2 text-sm border rounded bg-background"
-            />
-            <datalist id="existing-sections">
-              {existingNames.map(s => <option key={s} value={s} />)}
-            </datalist>
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Rows">
-              <input
-                aria-label="Rows"
-                type="number" min={1}
-                value={rows}
-                onChange={e => setRows(Math.max(1, Number(e.target.value)))}
-                className="w-full px-3 py-2 text-sm border rounded bg-background"
-              />
-            </Field>
-            <Field label="Cols">
-              <input
-                aria-label="Cols"
-                type="number" min={1}
-                value={cols}
-                onChange={e => setCols(Math.max(1, Number(e.target.value)))}
-                className="w-full px-3 py-2 text-sm border rounded bg-background"
-              />
-            </Field>
-          </div>
-          <Field label="Seat spacing (px)">
-            <input
-              aria-label="Seat spacing"
-              type="number" min={10}
-              value={spacing}
-              onChange={e => setSpacing(Math.max(10, Number(e.target.value)))}
-              className="w-full px-3 py-2 text-sm border rounded bg-background"
-            />
-          </Field>
-          <Field label="Ticket type">
-            <select
-              aria-label="Ticket type"
-              value={ticketTypeId}
-              onChange={e => setTicketTypeId(e.target.value)}
-              className="w-full px-3 py-2 text-sm border rounded bg-background"
-            >
-              {ticketTypes.length === 0 ? (
-                <option value="">No ticket types — add them first</option>
-              ) : ticketTypes.map(tt => (
-                <option key={tt.id} value={tt.id}>{tt.name} — {Number(tt.price).toLocaleString()}</option>
-              ))}
-            </select>
-          </Field>
-          <div className="text-xs text-muted-foreground">
-            Generates {rows * cols} seats at the canvas center. Row letters
-            and seat numbers are computed automatically based on visual
-            position — drop sections side-by-side and they&rsquo;ll share row
-            letters and continue seat numbering across them.
-          </div>
-        </div>
-        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t bg-muted/30">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="px-3 py-1.5 text-sm rounded hover:bg-accent"
+            className="text-sm text-muted-foreground hover:text-foreground"
           >
             Cancel
           </button>
           <button
             type="button"
-            onClick={submit}
-            disabled={ticketTypes.length === 0}
-            className="inline-flex items-center gap-1.5 rounded bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
+            onClick={() => onSubmit(rows, cols)}
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
           >
-            <Plus className="h-4 w-4" /> Add
+            Create grid
           </button>
         </div>
       </div>
@@ -1229,16 +532,507 @@ function AddSectionModal({
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Right rail — selection-aware actions + section list.
 // ---------------------------------------------------------------------------
 
-function stageToCanvas(
-  pt: { x: number; y: number },
-  stagePos: { x: number; y: number },
-  stageScale: number,
-) {
-  return {
-    x: (pt.x - stagePos.x) / stageScale,
-    y: (pt.y - stagePos.y) / stageScale,
+function RightPanel({
+  grid, ticketTypes, selection, selectedStageId, sectionList, seatsPerSection,
+  onClearSelection,
+  onClearStageSelection,
+  onPaintRange,
+  onPaintWithSectionUpsert,
+  onDeleteSection,
+  onStagePatch,
+  onStageRemove,
+  onPatchGrid,
+}: {
+  grid: SeatGrid
+  ticketTypes: ReservedEventTicketType[]
+  selection: CellRange | null
+  selectedStageId: string | null
+  sectionList: SectionMeta[]
+  seatsPerSection: Record<string, number>
+  onClearSelection: () => void
+  onClearStageSelection: () => void
+  onPaintRange: (paint: (cell: GridCell) => GridCell) => void
+  onPaintWithSectionUpsert: (section: SectionMeta, paint: (cell: GridCell) => GridCell) => void
+  onDeleteSection: (sectionId: string) => void
+  onStagePatch: (id: string, patch: Partial<StageBlock>) => void
+  onStageRemove: (id: string) => void
+  onPatchGrid: (next: SeatGrid) => void
+  onAddRow: (at: number, side: "above" | "below") => void
+  onRemoveRow: (at: number) => void
+  onAddCol: (at: number, side: "left" | "right") => void
+  onRemoveCol: (at: number) => void
+}) {
+  if (selectedStageId) {
+    const stage = grid.stages.find(s => s.id === selectedStageId)
+    if (stage) {
+      return (
+        <StageInspector
+          stage={stage}
+          maxX={grid.cols}
+          maxY={grid.rows}
+          onPatch={(patch) => onStagePatch(stage.id, patch)}
+          onRemove={() => onStageRemove(stage.id)}
+          onDeselect={onClearStageSelection}
+        />
+      )
+    }
   }
+  if (selection) {
+    return (
+      <RangeActions
+        grid={grid}
+        ticketTypes={ticketTypes}
+        selection={selection}
+        sectionList={sectionList}
+        onClearSelection={onClearSelection}
+        onPaintRange={onPaintRange}
+        onPaintWithSectionUpsert={onPaintWithSectionUpsert}
+      />
+    )
+  }
+  return (
+    <div className="space-y-4 p-4">
+      <SectionList
+        sections={sectionList}
+        ticketTypes={ticketTypes}
+        seatsPerSection={seatsPerSection}
+        onDeleteSection={onDeleteSection}
+      />
+      <RowLabelEditor grid={grid} onPatchGrid={onPatchGrid} />
+    </div>
+  )
+}
+
+// Inspector for a free-form stage — set label, width, height, position in
+// cell units. Width/height accept fractional cells for fine-tuning.
+function StageInspector({
+  stage, maxX, maxY, onPatch, onRemove, onDeselect,
+}: {
+  stage: StageBlock
+  maxX: number
+  maxY: number
+  onPatch: (patch: Partial<StageBlock>) => void
+  onRemove: () => void
+  onDeselect: () => void
+}) {
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
+
+  return (
+    <div className="space-y-3 p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Stage</h3>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onDeselect}
+            className="text-xs text-muted-foreground underline"
+          >
+            Deselect
+          </button>
+          <button
+            type="button"
+            onClick={onRemove}
+            title="Remove stage"
+            className="rounded p-1 text-destructive hover:bg-destructive/10"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Drag the stage on the canvas to move it. Use these fields to set
+        precise dimensions and position (in cell units).
+      </p>
+      <label className="block space-y-1">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Caption</span>
+        <input
+          aria-label="Stage caption"
+          value={stage.label}
+          onChange={e => onPatch({ label: e.target.value })}
+          className="w-full rounded border bg-background px-2 py-1 text-sm"
+        />
+      </label>
+      {/* Bound interaction:
+            - Width's upper bound depends on current X (so the stage can't
+              overflow the right edge).
+            - X's upper bound depends on current Width.
+            Same pair for Height/Y. The +/- buttons in NumberField use these
+            same bounds so they disable when the value is at the edge. */}
+      <div className="grid grid-cols-2 gap-2">
+        <NumberField
+          label="Width (cells)"
+          ariaLabel="Stage width"
+          value={stage.width}
+          step={0.5}
+          min={1}
+          max={Math.max(1, maxX - stage.x)}
+          onCommit={(v) => onPatch({ width: clamp(v, 1, Math.max(1, maxX - stage.x)) })}
+        />
+        <NumberField
+          label="Height (cells)"
+          ariaLabel="Stage height"
+          value={stage.height}
+          step={0.5}
+          min={1}
+          max={Math.max(1, maxY - stage.y)}
+          onCommit={(v) => onPatch({ height: clamp(v, 1, Math.max(1, maxY - stage.y)) })}
+        />
+        <NumberField
+          label="X (cells)"
+          ariaLabel="Stage X"
+          value={stage.x}
+          step={0.5}
+          min={0}
+          max={Math.max(0, maxX - stage.width)}
+          onCommit={(v) => onPatch({ x: clamp(v, 0, Math.max(0, maxX - stage.width)) })}
+        />
+        <NumberField
+          label="Y (cells)"
+          ariaLabel="Stage Y"
+          value={stage.y}
+          step={0.5}
+          min={0}
+          max={Math.max(0, maxY - stage.height)}
+          onCommit={(v) => onPatch({ y: clamp(v, 0, Math.max(0, maxY - stage.height)) })}
+        />
+      </div>
+    </div>
+  )
+}
+
+// Robust number field for the stage inspector. Controlled-number-input
+// spinner arrows are unreliable in React when the value is at a non-step-
+// aligned float (which happens after dragging), so we replace them with
+// explicit ± buttons and treat the text field as a draft that commits on
+// blur or Enter.
+function NumberField({
+  label, ariaLabel, value, step, min, max, onCommit,
+}: {
+  label: string
+  ariaLabel: string
+  value: number
+  step: number
+  min: number
+  max: number
+  onCommit: (v: number) => void
+}) {
+  // Local draft so the field doesn't fight the user mid-edit.
+  const [draft, setDraft] = useState<string>(formatNum(value))
+  useEffect(() => { setDraft(formatNum(value)) }, [value])
+
+  const commitFromDraft = () => {
+    const v = parseFloat(draft)
+    if (Number.isNaN(v)) { setDraft(formatNum(value)); return }
+    const c = Math.max(min, Math.min(max, v))
+    onCommit(c)
+    setDraft(formatNum(c))
+  }
+
+  // Round to step alignment so consecutive clicks never get stuck on a
+  // non-aligned float (e.g., 3.142 after drag → first click jumps to 3.0,
+  // not 3.142+0.5).
+  const stepTo = (delta: 1 | -1) => {
+    const next = Math.round(((value + delta * step) / step)) * step
+    const c = Math.max(min, Math.min(max, Number(next.toFixed(4))))
+    onCommit(c)
+  }
+
+  return (
+    <label className="block space-y-1">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
+      <div className="flex items-stretch rounded border bg-background">
+        <button
+          type="button"
+          onClick={() => stepTo(-1)}
+          disabled={value <= min}
+          className="px-2 text-sm text-muted-foreground hover:bg-muted disabled:opacity-40"
+          aria-label={`Decrease ${ariaLabel}`}
+        >−</button>
+        <input
+          aria-label={ariaLabel}
+          type="number"
+          min={min}
+          max={max}
+          step={step}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commitFromDraft}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur()
+          }}
+          className="min-w-0 flex-1 bg-transparent px-1 py-1 text-center text-sm focus:outline-none"
+        />
+        <button
+          type="button"
+          onClick={() => stepTo(1)}
+          disabled={value >= max}
+          className="px-2 text-sm text-muted-foreground hover:bg-muted disabled:opacity-40"
+          aria-label={`Increase ${ariaLabel}`}
+        >+</button>
+      </div>
+    </label>
+  )
+}
+
+// Format a number with up to 2 decimal places, dropping trailing zeros.
+function formatNum(n: number): string {
+  return Number.isFinite(n) ? String(Math.round(n * 100) / 100) : "0"
+}
+
+// What the admin can do with a selected range.
+function RangeActions({
+  grid, ticketTypes, selection, sectionList,
+  onClearSelection,
+  onPaintRange,
+  onPaintWithSectionUpsert,
+}: {
+  grid: SeatGrid
+  ticketTypes: ReservedEventTicketType[]
+  selection: CellRange
+  sectionList: SectionMeta[]
+  onClearSelection: () => void
+  onPaintRange: (paint: (cell: GridCell) => GridCell) => void
+  onPaintWithSectionUpsert: (section: SectionMeta, paint: (cell: GridCell) => GridCell) => void
+}) {
+  const w = selection.c2 - selection.c1 + 1
+  const h = selection.r2 - selection.r1 + 1
+  const total = w * h
+
+  const [newName, setNewName] = useState("")
+  const [newTier, setNewTier] = useState(ticketTypes[0]?.id ?? "")
+  const [labelText, setLabelText] = useState("Label")
+
+  const assignToExisting = (sectionId: string) => {
+    onPaintRange(() => ({ kind: "seat", sectionId }))
+  }
+  const createSection = () => {
+    if (!newName.trim()) { toast.error("Section name required"); return }
+    if (!newTier) { toast.error("Pick a ticket tier"); return }
+    const section: SectionMeta = {
+      id: uid("section"),
+      name: newName.trim(),
+      defaultTicketTypeId: newTier,
+    }
+    onPaintWithSectionUpsert(section, () => ({ kind: "seat", sectionId: section.id }))
+    setNewName("")
+  }
+
+  return (
+    <div className="space-y-4 p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Selection</h3>
+        <button
+          type="button"
+          onClick={onClearSelection}
+          className="text-xs text-muted-foreground underline"
+        >
+          Deselect
+        </button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {total} cell{total === 1 ? "" : "s"} · rows {selection.r1 + 1}–{selection.r2 + 1}, cols {selection.c1 + 1}–{selection.c2 + 1}
+      </p>
+
+      <div className="space-y-1.5">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Assign to existing section
+        </div>
+        {sectionList.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No sections yet.</p>
+        ) : (
+          <div className="grid gap-1">
+            {sectionList.map(s => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => assignToExisting(s.id)}
+                className="flex items-center gap-2 rounded border bg-background px-2.5 py-1.5 text-left text-sm hover:bg-accent"
+              >
+                <TierDotById id={s.defaultTicketTypeId} ticketTypes={ticketTypes} />
+                <span className="flex-1 truncate">{s.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-1.5 rounded-md border bg-background p-2.5">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Create new section
+        </div>
+        <input
+          aria-label="New section name"
+          value={newName}
+          onChange={e => setNewName(e.target.value)}
+          placeholder="e.g. Gold"
+          className="w-full rounded border bg-background px-2 py-1 text-sm"
+        />
+        <select
+          aria-label="New section tier"
+          value={newTier}
+          onChange={e => setNewTier(e.target.value)}
+          className="w-full rounded border bg-background px-2 py-1 text-sm"
+        >
+          {ticketTypes.length === 0
+            ? <option value="">Add ticket types first</option>
+            : ticketTypes.map(tt => (
+              <option key={tt.id} value={tt.id}>
+                {tt.name} — {Number(tt.price).toLocaleString()}
+              </option>
+            ))
+          }
+        </select>
+        <button
+          type="button"
+          onClick={createSection}
+          disabled={!ticketTypes.length}
+          className="w-full rounded bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
+        >
+          Create &amp; assign
+        </button>
+      </div>
+
+      <div className="space-y-1.5">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Other actions
+        </div>
+        <button
+          type="button"
+          onClick={() => onPaintRange(() => ({ kind: "empty" }))}
+          className="w-full rounded border bg-background px-3 py-1.5 text-left text-sm hover:bg-accent"
+        >
+          Mark as <strong>aisle</strong> (empty)
+        </button>
+        <div className="flex items-stretch gap-1.5">
+          <input
+            aria-label="Label text"
+            value={labelText}
+            onChange={e => setLabelText(e.target.value)}
+            placeholder="Label text"
+            className="flex-1 rounded border bg-background px-2 py-1.5 text-sm"
+          />
+          <button
+            type="button"
+            onClick={() => onPaintRange(() => ({ kind: "label", text: labelText }))}
+            className="rounded border bg-background px-3 py-1.5 text-sm hover:bg-accent"
+          >
+            Mark
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SectionList({
+  sections, ticketTypes, seatsPerSection, onDeleteSection,
+}: {
+  sections: SectionMeta[]
+  ticketTypes: ReservedEventTicketType[]
+  seatsPerSection: Record<string, number>
+  onDeleteSection: (sectionId: string) => void
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        Sections
+      </div>
+      {sections.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Drag across a range of cells to assign them to a section.
+        </p>
+      ) : (
+        <ul className="space-y-1.5">
+          {sections.map(s => {
+            const count = seatsPerSection[s.id] ?? 0
+            const tt = ticketTypes.find(t => t.id === s.defaultTicketTypeId)
+            return (
+              <li key={s.id} className="flex items-center gap-2 rounded-md border bg-background p-2 text-sm">
+                <TierDotById id={s.defaultTicketTypeId} ticketTypes={ticketTypes} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium text-foreground">{s.name}</div>
+                  <div className="truncate text-[11px] text-muted-foreground">
+                    <span className="font-semibold text-foreground">{count}</span>
+                    {" "}seat{count === 1 ? "" : "s"}
+                    {tt && <span> · {tt.name} · LKR {Number(tt.price).toLocaleString()}</span>}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm(`Remove section "${s.name}" and clear its ${count} seat${count === 1 ? "" : "s"}?`)) {
+                      onDeleteSection(s.id)
+                    }
+                  }}
+                  title="Remove section"
+                  className="rounded p-1 text-destructive hover:bg-destructive/10"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function RowLabelEditor({
+  grid, onPatchGrid,
+}: {
+  grid: SeatGrid
+  onPatchGrid: (next: SeatGrid) => void
+}) {
+  const rowLabelText = Array.from({ length: grid.rows }, (_, i) => grid.rowLabels?.[i] ?? "").join("\n")
+  return (
+    <div className="space-y-1.5">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        Custom row labels (one per line, blank = auto)
+      </div>
+      <textarea
+        aria-label="Row labels"
+        rows={Math.min(10, Math.max(3, grid.rows))}
+        value={rowLabelText}
+        onChange={e => {
+          const lines = e.target.value.split("\n")
+          const next = Array(grid.rows).fill(undefined).map((_, i) => {
+            const v = (lines[i] ?? "").trim()
+            return v === "" ? undefined : v
+          })
+          onPatchGrid({ ...grid, rowLabels: next })
+        }}
+        placeholder={"A\nB\nC\n…"}
+        className="w-full rounded border bg-background px-2 py-1 font-mono text-xs"
+      />
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground pt-2">
+        Seat number start
+      </div>
+      <input
+        aria-label="Seat number start"
+        type="number" min={1}
+        value={grid.seatNumberStart ?? 1}
+        onChange={e => {
+          const v = Math.max(1, Number(e.target.value) || 1)
+          onPatchGrid({ ...grid, seatNumberStart: v === 1 ? undefined : v })
+        }}
+        className="w-full rounded border bg-background px-2 py-1 text-sm"
+      />
+    </div>
+  )
+}
+
+function TierDotById({ id, ticketTypes }: { id: string; ticketTypes: ReservedEventTicketType[] }) {
+  const idx = ticketTypes.findIndex(t => t.id === id)
+  const c = tierColor(idx >= 0 ? idx : 0)
+  return (
+    <span
+      aria-hidden="true"
+      className="inline-block h-3 w-3 shrink-0 rounded-full"
+      style={{ background: c }}
+    />
+  )
 }

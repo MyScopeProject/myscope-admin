@@ -56,6 +56,10 @@ interface EventRow {
   approved_at: string | null
   created_at: string
   organizer: Organizer | null
+  // Used by the Approve gate: reserved events need a built seat map before
+  // approval, so we block the button until layout_status === 'ready'.
+  seating_mode?: string | null
+  layout_status?: string | null
 }
 
 const TABS: { key: ApprovalStatus; label: string }[] = [
@@ -342,13 +346,26 @@ function EventCard({
         Submitted {new Date(event.created_at).toLocaleString()}
       </div>
 
-      {showActions && (
+      {showActions && (() => {
+        // Reserved events can't be approved until the seat map is built —
+        // the API rejects the call anyway, so gate the button up here with
+        // a tooltip so the admin sees the requirement before clicking.
+        const seatMapMissing =
+          event.seating_mode === "reserved" && event.layout_status !== "ready"
+        const approveDisabled = busy || seatMapMissing
+        const approveTitle = seatMapMissing
+          ? "Build the seat map first (Reserved Seating Events)"
+          : busy
+            ? "Working…"
+            : "Approve this event"
+        return (
         <div className="flex items-center gap-2 mt-4 pt-4 border-t border-border">
           <button
             type="button"
             onClick={onApprove}
-            disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition disabled:opacity-50"
+            disabled={approveDisabled}
+            title={approveTitle}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {busy ? <Loader className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
             Approve
@@ -369,7 +386,23 @@ function EventCard({
             All events →
           </Link>
         </div>
-      )}
+        )
+      })()}
+      {showActions && (() => {
+        const seatMapMissing =
+          event.seating_mode === "reserved" && event.layout_status !== "ready"
+        return seatMapMissing ? (
+          <div className="mt-2 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+            <span>
+              Reserved event — seat map not built yet. Build it from{" "}
+              <Link href="/reserved-seating-events" className="underline font-medium">
+                Reserved Seating Events
+              </Link>{" "}
+              before approving.
+            </span>
+          </div>
+        ) : null
+      })()}
     </div>
   )
 }

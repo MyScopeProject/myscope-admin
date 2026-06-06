@@ -10,7 +10,7 @@
 // canvas subtree as a single client-only chunk that mounts atomically.
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Stage, Layer, Rect, Text as KText, Circle, Group, Image as KImage, Transformer } from "react-konva"
+import { Stage, Layer, Rect, Text as KText, Circle, Group, Image as KImage, Line, Transformer } from "react-konva"
 import type Konva from "konva"
 import {
   type SectionSpec,
@@ -18,6 +18,66 @@ import {
   deriveSeats,
   deriveLabels,
 } from "./seatMapModel"
+
+// Snap behaviour while dragging a section:
+//  - Sibling alignment wins when within ALIGN_TOL pixels of another section's
+//    left edge / center / right edge (and same for Y). A cyan dashed guide
+//    renders at the matched coordinate.
+//  - Otherwise the section snaps to the SNAP_GRID grid (20 px) so multi-section
+//    "square table" layouts stay neatly aligned without manual eyeballing.
+const SNAP_GRID = 20
+const ALIGN_TOL = 8
+
+interface AlignGuides {
+  vertical:   number[]   // x-coords for dashed vertical lines
+  horizontal: number[]   // y-coords for dashed horizontal lines
+}
+
+function computeSnap(
+  sectionId: string,
+  draftX: number, draftY: number,
+  w: number, h: number,
+  sections: SectionSpec[],
+): { x: number; y: number; guides: AlignGuides } {
+  // My anchor X positions: left edge, horizontal center, right edge.
+  const myAX = [draftX, draftX + w / 2, draftX + w]
+  const myAY = [draftY, draftY + h / 2, draftY + h]
+
+  let bestDx: number | null = null; let guideX: number | null = null
+  let bestDy: number | null = null; let guideY: number | null = null
+
+  for (const o of sections) {
+    if (o.id === sectionId) continue
+    const ow = (o.cols - 1) * o.seatSpacing
+    const oh = (o.rows - 1) * o.rowSpacing
+    const otherAX = [o.x, o.x + ow / 2, o.x + ow]
+    const otherAY = [o.y, o.y + oh / 2, o.y + oh]
+    for (const ma of myAX) for (const oa of otherAX) {
+      const d = oa - ma
+      if (Math.abs(d) <= ALIGN_TOL && (bestDx === null || Math.abs(d) < Math.abs(bestDx))) {
+        bestDx = d; guideX = oa
+      }
+    }
+    for (const ma of myAY) for (const oa of otherAY) {
+      const d = oa - ma
+      if (Math.abs(d) <= ALIGN_TOL && (bestDy === null || Math.abs(d) < Math.abs(bestDy))) {
+        bestDy = d; guideY = oa
+      }
+    }
+  }
+
+  // Fall back to grid snap when nothing nearby aligns.
+  const finalX = bestDx !== null ? draftX + bestDx : Math.round(draftX / SNAP_GRID) * SNAP_GRID
+  const finalY = bestDy !== null ? draftY + bestDy : Math.round(draftY / SNAP_GRID) * SNAP_GRID
+
+  return {
+    x: finalX, y: finalY,
+    guides: {
+      vertical:   guideX !== null ? [guideX] : [],
+      horizontal: guideY !== null ? [guideY] : [],
+    },
+  }
+}
 
 export interface EditorDecor {
   id: string
@@ -79,6 +139,10 @@ export default function BuilderCanvas(props: Props) {
   const stageRef = useRef<Konva.Stage | null>(null)
   const sectionRefs = useRef<Record<string, Konva.Group | null>>({})
   const transformerRef = useRef<Konva.Transformer | null>(null)
+
+  // Active alignment guides while a section is being dragged. Cleared on
+  // dragend so guides don't linger after the user drops the section.
+  const [activeGuides, setActiveGuides] = useState<AlignGuides>({ vertical: [], horizontal: [] })
 
   // Background image as an HTMLImageElement so Konva.Image can measure it.
   const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null)
@@ -295,9 +359,18 @@ export default function BuilderCanvas(props: Props) {
               x={section.x}
               y={section.y}
               draggable
+              dragBoundFunc={(pos) => {
+                // Snap to sibling edges/centers first, then to a 20 px grid.
+                // Side effect: update the guide overlay so dashed cyan lines
+                // appear at the matched coordinate.
+                const snapped = computeSnap(section.id, pos.x, pos.y, w, h, sections)
+                setActiveGuides(snapped.guides)
+                return { x: snapped.x, y: snapped.y }
+              }}
               onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
                 const node = e.target
                 if (node !== e.currentTarget) return
+                setActiveGuides({ vertical: [], horizontal: [] })
                 const dx = node.x() - section.x
                 const dy = node.y() - section.y
                 if (dx === 0 && dy === 0) return
@@ -433,6 +506,30 @@ export default function BuilderCanvas(props: Props) {
               align="left"
             />
           </Group>
+        ))}
+
+        {/* Alignment guides — dashed cyan lines drawn at every snapped
+            sibling edge/center while a section is being dragged. Cleared
+            on dragend. listening=false so guides never block clicks. */}
+        {activeGuides.vertical.map((gx, i) => (
+          <Line
+            key={`vg-${i}`}
+            points={[gx, 0, gx, viewbox.height]}
+            stroke="#06B6D4"
+            strokeWidth={1}
+            dash={[5, 4]}
+            listening={false}
+          />
+        ))}
+        {activeGuides.horizontal.map((gy, i) => (
+          <Line
+            key={`hg-${i}`}
+            points={[0, gy, viewbox.width, gy]}
+            stroke="#06B6D4"
+            strokeWidth={1}
+            dash={[5, 4]}
+            listening={false}
+          />
         ))}
 
         {/* Transformer for section resize. Constrained to scaling only. */}

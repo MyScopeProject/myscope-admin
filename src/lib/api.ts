@@ -27,8 +27,14 @@ api.interceptors.response.use(
           }
           break;
 
+        case 400:
+          // 4xx business-rule failures (e.g. approve-before-seatmap) — soft warn
+          // since the caller surfaces the message via toast already.
+          console.warn('Validation:', data?.message);
+          break;
+
         case 403:
-          console.error('Access forbidden:', data?.message);
+          console.warn('Access forbidden:', data?.message);
           break;
 
         case 404:
@@ -40,7 +46,12 @@ api.interceptors.response.use(
           break;
 
         default:
-          console.error('API Error:', data?.message || 'An error occurred');
+          // Reserve console.error for the unexpected — everything else warns.
+          if (status >= 500) {
+            console.error('API Error:', data?.message || 'An error occurred');
+          } else {
+            console.warn('API Error:', data?.message || 'An error occurred');
+          }
       }
     } else if (error.request) {
       console.error('Network error: No response from server');
