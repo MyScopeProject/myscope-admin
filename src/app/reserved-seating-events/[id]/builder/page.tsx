@@ -47,6 +47,8 @@ import {
   removeCol,
   removeRow,
   removeStage,
+  setColLabel,
+  setRowLabel,
   updateStage,
   upsertSection,
 } from "./macroLayoutModel"
@@ -360,6 +362,37 @@ function BuilderInner() {
               if (nx === s.x && ny === s.y) return
               updateGrid(updateStage(grid, id, { x: nx, y: ny }))
             }}
+            onMoveSelection={(dr, dc) => {
+              if (!selection || (dr === 0 && dc === 0)) return
+              const newR1 = selection.r1 + dr
+              const newR2 = selection.r2 + dr
+              const newC1 = selection.c1 + dc
+              const newC2 = selection.c2 + dc
+              if (newR1 < 0 || newR2 >= grid.rows || newC1 < 0 || newC2 >= grid.cols) {
+                toast.error("Can't move outside the grid.")
+                return
+              }
+              // Snapshot the source range, clear it, then paint into the
+              // destination. Order matters when source and destination
+              // overlap — clearing first guarantees no stale cells linger.
+              const snapshot: { r: number; c: number; cell: GridCell }[] = []
+              for (let r = selection.r1; r <= selection.r2; r++) {
+                for (let c = selection.c1; c <= selection.c2; c++) {
+                  snapshot.push({ r, c, cell: grid.cells[r][c] })
+                }
+              }
+              const nextCells = grid.cells.map(row => row.slice())
+              for (const { r, c } of snapshot) {
+                nextCells[r][c] = { kind: "empty" }
+              }
+              for (const { r, c, cell } of snapshot) {
+                nextCells[r + dr][c + dc] = cell
+              }
+              updateGrid({ ...grid, cells: nextCells })
+              setSelection({ r1: newR1, c1: newC1, r2: newR2, c2: newC2 })
+            }}
+            onRowLabelChange={(r, label) => updateGrid(setRowLabel(grid, r, label))}
+            onColLabelChange={(c, label) => updateGrid(setColLabel(grid, c, label))}
             seatColor={seatColor}
           />
         </div>
@@ -601,7 +634,126 @@ function RightPanel({
         seatsPerSection={seatsPerSection}
         onDeleteSection={onDeleteSection}
       />
-      <RowLabelEditor grid={grid} onPatchGrid={onPatchGrid} />
+      <GridSizeEditor grid={grid} onPatchGrid={onPatchGrid} />
+      <SeatNumberStartField grid={grid} onPatchGrid={onPatchGrid} />
+      <p className="text-[11px] leading-snug text-muted-foreground">
+        Click any row letter or column number in the sheet to set a custom
+        label. Clear it back to empty to use the default.
+      </p>
+    </div>
+  )
+}
+
+// Resize the whole spreadsheet during editing. New rows / cols append at
+// the bottom-right; existing seats, labels, and stages are preserved.
+// Shrinking is allowed but warns first if it would delete seat cells.
+function GridSizeEditor({
+  grid, onPatchGrid,
+}: {
+  grid: SeatGrid
+  onPatchGrid: (next: SeatGrid) => void
+}) {
+  const [rowsDraft, setRowsDraft] = useState(grid.rows)
+  const [colsDraft, setColsDraft] = useState(grid.cols)
+  useEffect(() => { setRowsDraft(grid.rows) }, [grid.rows])
+  useEffect(() => { setColsDraft(grid.cols) }, [grid.cols])
+
+  const dirty = rowsDraft !== grid.rows || colsDraft !== grid.cols
+  const willShrinkRows = rowsDraft < grid.rows
+  const willShrinkCols = colsDraft < grid.cols
+
+  // Count seat cells that would be discarded by the resize so we can ask
+  // for confirmation before dropping data.
+  const lostSeats = (() => {
+    if (!willShrinkRows && !willShrinkCols) return 0
+    let n = 0
+    for (let r = 0; r < grid.rows; r++) {
+      for (let c = 0; c < grid.cols; c++) {
+        if (r >= rowsDraft || c >= colsDraft) {
+          if (grid.cells[r][c].kind === "seat") n += 1
+        }
+      }
+    }
+    return n
+  })()
+
+  const apply = () => {
+    const newRows = Math.max(1, Math.min(200, rowsDraft))
+    const newCols = Math.max(1, Math.min(200, colsDraft))
+    if (newRows === grid.rows && newCols === grid.cols) return
+    if (lostSeats > 0) {
+      const ok = window.confirm(
+        `Shrinking will drop ${lostSeats} seat${lostSeats === 1 ? "" : "s"} from the grid. Continue?`,
+      )
+      if (!ok) return
+    }
+    const cells: GridCell[][] = []
+    for (let r = 0; r < newRows; r++) {
+      const row: GridCell[] = []
+      for (let c = 0; c < newCols; c++) {
+        row.push(grid.cells[r]?.[c] ?? { kind: "empty" })
+      }
+      cells.push(row)
+    }
+    // Truncate label arrays to match new dimensions.
+    const rowLabels = grid.rowLabels?.slice(0, newRows)
+    const colLabels = grid.colLabels?.slice(0, newCols)
+    onPatchGrid({ ...grid, rows: newRows, cols: newCols, cells, rowLabels, colLabels })
+  }
+
+  const bump = (axis: "rows" | "cols", delta: number) => {
+    if (axis === "rows") setRowsDraft(r => Math.max(1, Math.min(200, r + delta)))
+    else                 setColsDraft(c => Math.max(1, Math.min(200, c + delta)))
+  }
+
+  return (
+    <div className="space-y-1.5 rounded-md border bg-background p-2.5">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        Grid size
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <span className="text-[10px] text-muted-foreground">Rows</span>
+          <div className="flex items-stretch rounded border">
+            <button type="button" onClick={() => bump("rows", -1)} className="px-2 text-sm hover:bg-muted" aria-label="Decrease rows">−</button>
+            <input
+              aria-label="Total rows"
+              type="number" min={1} max={200}
+              value={rowsDraft}
+              onChange={e => setRowsDraft(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}
+              className="min-w-0 flex-1 bg-transparent px-1 text-center text-sm focus:outline-none"
+            />
+            <button type="button" onClick={() => bump("rows", 1)} className="px-2 text-sm hover:bg-muted" aria-label="Increase rows">+</button>
+          </div>
+        </div>
+        <div className="space-y-1">
+          <span className="text-[10px] text-muted-foreground">Cols</span>
+          <div className="flex items-stretch rounded border">
+            <button type="button" onClick={() => bump("cols", -1)} className="px-2 text-sm hover:bg-muted" aria-label="Decrease cols">−</button>
+            <input
+              aria-label="Total cols"
+              type="number" min={1} max={200}
+              value={colsDraft}
+              onChange={e => setColsDraft(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}
+              className="min-w-0 flex-1 bg-transparent px-1 text-center text-sm focus:outline-none"
+            />
+            <button type="button" onClick={() => bump("cols", 1)} className="px-2 text-sm hover:bg-muted" aria-label="Increase cols">+</button>
+          </div>
+        </div>
+      </div>
+      {dirty && lostSeats > 0 && (
+        <p className="text-[11px] text-amber-600 dark:text-amber-400">
+          {lostSeats} seat{lostSeats === 1 ? "" : "s"} will be dropped.
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={apply}
+        disabled={!dirty}
+        className="w-full rounded bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
+      >
+        Apply ({grid.rows}×{grid.cols} → {rowsDraft}×{colsDraft})
+      </button>
     </div>
   )
 }
@@ -655,12 +807,9 @@ function StageInspector({
           className="w-full rounded border bg-background px-2 py-1 text-sm"
         />
       </label>
-      {/* Bound interaction:
-            - Width's upper bound depends on current X (so the stage can't
-              overflow the right edge).
-            - X's upper bound depends on current Width.
-            Same pair for Height/Y. The +/- buttons in NumberField use these
-            same bounds so they disable when the value is at the edge. */}
+      {/* Width / Height only — position is set by dragging the stage on
+          the canvas. Removing X/Y inputs avoids them fighting the drag
+          handler (and the user said "let admin drag and place it"). */}
       <div className="grid grid-cols-2 gap-2">
         <NumberField
           label="Width (cells)"
@@ -679,24 +828,6 @@ function StageInspector({
           min={1}
           max={Math.max(1, maxY - stage.y)}
           onCommit={(v) => onPatch({ height: clamp(v, 1, Math.max(1, maxY - stage.y)) })}
-        />
-        <NumberField
-          label="X (cells)"
-          ariaLabel="Stage X"
-          value={stage.x}
-          step={0.5}
-          min={0}
-          max={Math.max(0, maxX - stage.width)}
-          onCommit={(v) => onPatch({ x: clamp(v, 0, Math.max(0, maxX - stage.width)) })}
-        />
-        <NumberField
-          label="Y (cells)"
-          ariaLabel="Stage Y"
-          value={stage.y}
-          step={0.5}
-          min={0}
-          max={Math.max(0, maxY - stage.height)}
-          onCommit={(v) => onPatch({ y: clamp(v, 0, Math.max(0, maxY - stage.height)) })}
         />
       </div>
     </div>
@@ -981,36 +1112,19 @@ function SectionList({
   )
 }
 
-function RowLabelEditor({
+// Sole grid-level setting now that row + column labels are edited inline
+// in the sheet headers. Default 1; values other than 1 are stored.
+function SeatNumberStartField({
   grid, onPatchGrid,
 }: {
   grid: SeatGrid
   onPatchGrid: (next: SeatGrid) => void
 }) {
-  const rowLabelText = Array.from({ length: grid.rows }, (_, i) => grid.rowLabels?.[i] ?? "").join("\n")
   return (
-    <div className="space-y-1.5">
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        Custom row labels (one per line, blank = auto)
-      </div>
-      <textarea
-        aria-label="Row labels"
-        rows={Math.min(10, Math.max(3, grid.rows))}
-        value={rowLabelText}
-        onChange={e => {
-          const lines = e.target.value.split("\n")
-          const next = Array(grid.rows).fill(undefined).map((_, i) => {
-            const v = (lines[i] ?? "").trim()
-            return v === "" ? undefined : v
-          })
-          onPatchGrid({ ...grid, rowLabels: next })
-        }}
-        placeholder={"A\nB\nC\n…"}
-        className="w-full rounded border bg-background px-2 py-1 font-mono text-xs"
-      />
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground pt-2">
-        Seat number start
-      </div>
+    <label className="block space-y-1">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        Seat number start (default column 1)
+      </span>
       <input
         aria-label="Seat number start"
         type="number" min={1}
@@ -1021,7 +1135,7 @@ function RowLabelEditor({
         }}
         className="w-full rounded border bg-background px-2 py-1 text-sm"
       />
-    </div>
+    </label>
   )
 }
 

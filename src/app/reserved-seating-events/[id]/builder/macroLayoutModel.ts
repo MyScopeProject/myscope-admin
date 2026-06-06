@@ -42,7 +42,12 @@ export interface SeatGrid {
   // Optional per-row label overrides. Index 0 = top row. Blank/undefined =
   // auto (A, B, C, ...).
   rowLabels?: (string | undefined)[]
-  // Optional seat-number start for the whole grid. Default 1.
+  // Optional per-column seat-number overrides. Index 0 = leftmost col.
+  // When set, replaces the default position-based seat number (1, 2, 3, …)
+  // for any seat in that column. Blank/undefined = auto.
+  colLabels?: (string | undefined)[]
+  // Optional seat-number start for the whole grid. Default 1. Ignored on
+  // columns that have an explicit colLabels override.
   seatNumberStart?: number
 }
 
@@ -104,7 +109,9 @@ export function addCol(grid: SeatGrid, atIndex: number, side: "left" | "right"):
     next.splice(insertAt, 0, { kind: "empty" })
     return next
   })
-  return { ...grid, cols: grid.cols + 1, cells }
+  const colLabels = grid.colLabels?.slice()
+  if (colLabels) colLabels.splice(insertAt, 0, undefined)
+  return { ...grid, cols: grid.cols + 1, cells, colLabels }
 }
 
 // Remove a column. Returns grid unchanged if it would leave 0 cols.
@@ -115,7 +122,24 @@ export function removeCol(grid: SeatGrid, colIdx: number): SeatGrid {
     next.splice(colIdx, 1)
     return next
   })
-  return { ...grid, cols: grid.cols - 1, cells }
+  const colLabels = grid.colLabels?.slice()
+  if (colLabels) colLabels.splice(colIdx, 1)
+  return { ...grid, cols: grid.cols - 1, cells, colLabels }
+}
+
+// Inline-label setters used by the spreadsheet headers. Pass undefined to
+// clear back to auto-derived (A/B/C... for rows, 1/2/3... for columns).
+export function setRowLabel(grid: SeatGrid, rowIdx: number, label: string | undefined): SeatGrid {
+  const labels = (grid.rowLabels ?? Array(grid.rows).fill(undefined)).slice()
+  while (labels.length < grid.rows) labels.push(undefined)
+  labels[rowIdx] = label
+  return { ...grid, rowLabels: labels }
+}
+export function setColLabel(grid: SeatGrid, colIdx: number, label: string | undefined): SeatGrid {
+  const labels = (grid.colLabels ?? Array(grid.cols).fill(undefined)).slice()
+  while (labels.length < grid.cols) labels.push(undefined)
+  labels[colIdx] = label
+  return { ...grid, colLabels: labels }
 }
 
 // Normalised rectangular range (top-left + bottom-right).
@@ -227,13 +251,23 @@ export function deriveLayout(grid: SeatGrid): {
   // Seat-number start for the whole grid (1 by default).
   const seatStart = grid.seatNumberStart ?? 1
 
-  // Walk each row: emit seats + group consecutive label cells into single
-  // text runs. Stage banners now come from grid.stages (free-form overlays)
-  // — see below — so we no longer scan cells for { kind: 'stage' }.
+  // Walk each row: emit seats (numbered by COLUMN POSITION so aisles don't
+  // shift the numbering — col 5 is always seat "6" no matter what sits in
+  // col 4) + group consecutive label cells into single text runs. Stage
+  // banners come from grid.stages, not cells.
+  //
+  // Label resolution distinguishes three states:
+  //   undefined → auto-derive default
+  //   ""        → explicit blank (preserved as-is)
+  //   "X"       → custom override
   for (let r = 0; r < grid.rows; r++) {
     const rowLabelCustom = grid.rowLabels?.[r]
-    const rowLabel = rowLabelCustom?.trim() || defaultRowLabel(r)
-    let seatNum = seatStart
+    // Display label can be blank ("") for aisle-only rows. Seat data needs
+    // a non-empty row_label — the API rejects empty strings and the unique
+    // (event_id, row_label, seat_number) constraint requires distinct values
+    // — so fall back to the auto-derived default for the seat payload only.
+    const displayRowLabel = rowLabelCustom !== undefined ? rowLabelCustom : defaultRowLabel(r)
+    const rowLabel = displayRowLabel.trim() || defaultRowLabel(r)
     let labelRunStart = -1
     let labelText = ""
 
@@ -260,7 +294,11 @@ export function deriveLayout(grid: SeatGrid): {
         const tier = cell.tierOverride ?? sec.defaultTicketTypeId
         const x = Math.round((c + 0.5) * CELL_PX)
         const y = Math.round((r + 0.5) * CELL_PX)
-        const num = String(seatNum)
+        const colLabelCustom = grid.colLabels?.[c]
+        // Same blank-fallback as the row label — seat_number must be non-empty
+        // for the DB unique constraint and the API validator.
+        const displayNum = colLabelCustom !== undefined ? colLabelCustom : String(seatStart + c)
+        const num = displayNum.trim() || String(seatStart + c)
         seats.push({
           id: `${sec.id}#${r}#${c}`,
           section: sec.name,
@@ -270,7 +308,6 @@ export function deriveLayout(grid: SeatGrid): {
           x, y,
           ticket_type_id: tier,
         })
-        seatNum += 1
       } else if (cell.kind === "label") {
         if (labelRunStart < 0) {
           labelRunStart = c
@@ -296,7 +333,61 @@ export function deriveLayout(grid: SeatGrid): {
     })
   }
 
+  // Hidden meta entry — encodes grid structure (total rows × cols, custom
+  // row/col labels, seat-number start) so the spreadsheet shape survives a
+  // round-trip through the API. Positioned far off-canvas so the consumer
+  // renderer doesn't show it. Picked up by hydrateGrid() on reload.
+  decor.push({
+    kind: "text",
+    x: META_OFFSCREEN,
+    y: META_OFFSCREEN,
+    label: META_PREFIX + JSON.stringify({
+      rows: grid.rows,
+      cols: grid.cols,
+      rowLabels: grid.rowLabels ?? null,
+      colLabels: grid.colLabels ?? null,
+      seatNumberStart: grid.seatNumberStart ?? null,
+    }),
+  })
+
   return { viewbox: { width: W, height: H }, seats, decor }
+}
+
+const META_PREFIX = "__macroLayoutMeta__"
+const META_OFFSCREEN = -99999
+
+interface MacroLayoutMeta {
+  rows: number
+  cols: number
+  rowLabels: (string | null)[] | null
+  colLabels: (string | null)[] | null
+  seatNumberStart: number | null
+}
+
+// Pull the meta entry out of an apiDecor list (returns the parsed payload +
+// the filtered decor list without the meta entry).
+function extractMeta(apiDecor: ApiDecorLike[]): {
+  meta: MacroLayoutMeta | null
+  decor: ApiDecorLike[]
+} {
+  let meta: MacroLayoutMeta | null = null
+  const filtered: ApiDecorLike[] = []
+  for (const d of apiDecor) {
+    if (
+      d.kind === "text" &&
+      typeof d.label === "string" &&
+      d.label.startsWith(META_PREFIX)
+    ) {
+      try {
+        meta = JSON.parse(d.label.slice(META_PREFIX.length)) as MacroLayoutMeta
+      } catch {
+        // ignore corrupted meta — fall back to inference
+      }
+      continue
+    }
+    filtered.push(d)
+  }
+  return { meta, decor: filtered }
 }
 
 // ---------------------------------------------------------------------------
@@ -324,10 +415,15 @@ interface ApiDecorLike {
 
 export function hydrateGrid(
   apiSeats: ApiSeatLike[],
-  apiDecor: ApiDecorLike[],
+  apiDecorRaw: ApiDecorLike[],
   uid: (prefix?: string) => string,
 ): SeatGrid {
-  if (apiSeats.length === 0 && apiDecor.length === 0) return emptyGrid()
+  if (apiSeats.length === 0 && apiDecorRaw.length === 0) return emptyGrid()
+
+  // Pull the meta entry out first — it's the authoritative source for grid
+  // dimensions + label overrides. Falls back to position-based inference
+  // when missing (legacy events saved before the meta entry existed).
+  const { meta, decor: apiDecor } = extractMeta(apiDecorRaw)
 
   // Bucket seats by row_label to determine row count + the row order via
   // mean Y. Within each row, sort by X to determine column slots.
@@ -416,6 +512,38 @@ export function hydrateGrid(
     } else if (extraRow < rows) {
       cells[extraRow][0] = { kind: "label", text: d.label || "Label" }
       extraRow += 1
+    }
+  }
+
+  // Apply meta overrides — these are authoritative when the seat map was
+  // saved with the spreadsheet builder. We resize the cells grid to the
+  // saved rows × cols (preserving entirely-empty rows/columns the inference
+  // can't see), and replace the inferred row/col label arrays.
+  if (meta && Number.isFinite(meta.rows) && Number.isFinite(meta.cols)) {
+    const metaRows = Math.max(1, Math.round(meta.rows))
+    const metaCols = Math.max(1, Math.round(meta.cols))
+    if (metaRows !== rows || metaCols !== cols) {
+      const next: GridCell[][] = []
+      for (let r = 0; r < metaRows; r++) {
+        const row: GridCell[] = []
+        for (let c = 0; c < metaCols; c++) {
+          row.push(cells[r]?.[c] ?? { kind: "empty" })
+        }
+        next.push(row)
+      }
+      return {
+        rows: metaRows, cols: metaCols, cells: next, sections, stages,
+        rowLabels: meta.rowLabels ? meta.rowLabels.map(v => v ?? undefined) : rowLabels,
+        colLabels: meta.colLabels ? meta.colLabels.map(v => v ?? undefined) : undefined,
+        seatNumberStart: meta.seatNumberStart ?? undefined,
+      }
+    }
+    // Same dimensions — just apply the label overrides.
+    return {
+      rows, cols, cells, sections, stages,
+      rowLabels: meta.rowLabels ? meta.rowLabels.map(v => v ?? undefined) : rowLabels,
+      colLabels: meta.colLabels ? meta.colLabels.map(v => v ?? undefined) : undefined,
+      seatNumberStart: meta.seatNumberStart ?? undefined,
     }
   }
 
