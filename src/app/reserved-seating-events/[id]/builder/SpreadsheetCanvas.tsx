@@ -119,6 +119,30 @@ export function SeatGridCanvas({
     }
   }, [cellPx, grid.rows, grid.cols])
 
+  // Non-empty rank maps: grid row/col index → "rank among rows/cols that
+  // contain at least one seat" (or -1 for rows/cols with zero seats). The
+  // header default labels skip blank gap rows/cols, matching deriveLayout()
+  // exactly so what's shown in the sheet == what gets saved on the seats.
+  const { rowNonEmptyRank, colNonEmptyRank } = (() => {
+    const rRank = Array(grid.rows).fill(-1) as number[]
+    const cRank = Array(grid.cols).fill(-1) as number[]
+    const rowHas = Array(grid.rows).fill(false) as boolean[]
+    const colHas = Array(grid.cols).fill(false) as boolean[]
+    for (let r = 0; r < grid.rows; r++) {
+      for (let c = 0; c < grid.cols; c++) {
+        if (grid.cells[r]?.[c]?.kind === "seat") {
+          rowHas[r] = true
+          colHas[c] = true
+        }
+      }
+    }
+    let n = 0
+    for (let r = 0; r < grid.rows; r++) if (rowHas[r]) { rRank[r] = n++ }
+    let m = 0
+    for (let c = 0; c < grid.cols; c++) if (colHas[c]) { cRank[c] = m++ }
+    return { rowNonEmptyRank: rRank, colNonEmptyRank: cRank }
+  })()
+
   // Mouse-up anywhere (even outside the grid) ends a drag — either commits
   // a new range selection or a move of the existing selection.
   useEffect(() => {
@@ -227,6 +251,10 @@ export function SeatGridCanvas({
         }}
       >
       <div ref={wrapperRef} className="relative inline-block">
+      {/* Header labels: empty rows / cols are SKIPPED in the auto-derived
+          numbering — admin's gap rows don't waste letters. Stays in sync
+          with deriveLayout() so what's shown == what gets saved. */}
+      {(() => null)()}
       <table className="border-separate" style={{ borderSpacing: CELL_BORDER_SPACING }}>
         <thead>
           <tr>
@@ -236,6 +264,8 @@ export function SeatGridCanvas({
             />
             {Array.from({ length: grid.cols }).map((_, c) => {
               const seatStart = grid.seatNumberStart ?? 1
+              const colRank = colNonEmptyRank[c]
+              const autoCol = colRank >= 0 ? String(seatStart + colRank) : ""
               return (
                 <th
                   key={`coltop-${c}`}
@@ -244,7 +274,7 @@ export function SeatGridCanvas({
                 >
                   <EditableHeader
                     value={grid.colLabels?.[c]}
-                    defaultValue={String(seatStart + c)}
+                    defaultValue={autoCol}
                     onCommit={(v) => onColLabelChange(c, v)}
                     align="center"
                   />
@@ -254,7 +284,10 @@ export function SeatGridCanvas({
           </tr>
         </thead>
         <tbody>
-          {grid.cells.map((row, r) => (
+          {grid.cells.map((row, r) => {
+            const rowRank = rowNonEmptyRank[r]
+            const autoRow = rowRank >= 0 ? defaultRowLabel(rowRank) : ""
+            return (
             <tr key={`row-${r}`}>
               <th
                 className="pr-1 text-right"
@@ -262,7 +295,7 @@ export function SeatGridCanvas({
               >
                 <EditableHeader
                   value={grid.rowLabels?.[r]}
-                  defaultValue={defaultRowLabel(r)}
+                  defaultValue={autoRow}
                   onCommit={(v) => onRowLabelChange(r, v)}
                   align="right"
                 />
@@ -301,7 +334,8 @@ export function SeatGridCanvas({
                 </td>
               ))}
             </tr>
-          ))}
+            )
+          })}
         </tbody>
       </table>
 

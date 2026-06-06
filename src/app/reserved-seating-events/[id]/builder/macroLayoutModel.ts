@@ -251,13 +251,41 @@ export function deriveLayout(grid: SeatGrid): {
   // Seat-number start for the whole grid (1 by default).
   const seatStart = grid.seatNumberStart ?? 1
 
-  // Walk each row: emit seats (numbered by COLUMN POSITION so aisles don't
-  // shift the numbering — col 5 is always seat "6" no matter what sits in
-  // col 4) + group consecutive label cells into single text runs. Stage
-  // banners come from grid.stages, not cells.
+  // Pre-compute which rows / cols contain any actual seats. Empty rows and
+  // empty columns ("gap" rows/cols the admin left for visual spacing) are
+  // SKIPPED in the default row-letter and seat-number sequences — so "A, B,
+  // [empty gap row], C" yields seat labels A, B, C rather than A, B, D.
+  // Custom row/col labels still win when set.
+  const rowSeatCount: number[] = Array(grid.rows).fill(0)
+  const colSeatCount: number[] = Array(grid.cols).fill(0)
+  for (let r = 0; r < grid.rows; r++) {
+    for (let c = 0; c < grid.cols; c++) {
+      if (grid.cells[r][c].kind === "seat") {
+        rowSeatCount[r] += 1
+        colSeatCount[c] += 1
+      }
+    }
+  }
+  // Map: grid row index → "non-empty rank" (skipping empty rows in the count).
+  const nonEmptyRowRank: number[] = Array(grid.rows).fill(-1)
+  let nrCount = 0
+  for (let r = 0; r < grid.rows; r++) {
+    if (rowSeatCount[r] > 0) { nonEmptyRowRank[r] = nrCount; nrCount += 1 }
+  }
+  // Map: grid col index → "non-empty rank" (skipping empty cols in the count).
+  const nonEmptyColRank: number[] = Array(grid.cols).fill(-1)
+  let ncCount = 0
+  for (let c = 0; c < grid.cols; c++) {
+    if (colSeatCount[c] > 0) { nonEmptyColRank[c] = ncCount; ncCount += 1 }
+  }
+
+  // Walk each row: emit seats (numbered by NON-EMPTY column rank so aisles
+  // don't waste numbers — admin's blank cols are ignored in the count) +
+  // group consecutive label cells into single text runs. Stage banners come
+  // from grid.stages, not cells.
   //
   // Label resolution distinguishes three states:
-  //   undefined → auto-derive default
+  //   undefined → auto-derive default (counting non-empty rows/cols only)
   //   ""        → explicit blank (preserved as-is)
   //   "X"       → custom override
   for (let r = 0; r < grid.rows; r++) {
@@ -266,8 +294,11 @@ export function deriveLayout(grid: SeatGrid): {
     // a non-empty row_label — the API rejects empty strings and the unique
     // (event_id, row_label, seat_number) constraint requires distinct values
     // — so fall back to the auto-derived default for the seat payload only.
-    const displayRowLabel = rowLabelCustom !== undefined ? rowLabelCustom : defaultRowLabel(r)
-    const rowLabel = displayRowLabel.trim() || defaultRowLabel(r)
+    const autoRowLabel = nonEmptyRowRank[r] >= 0
+      ? defaultRowLabel(nonEmptyRowRank[r])
+      : defaultRowLabel(r)
+    const displayRowLabel = rowLabelCustom !== undefined ? rowLabelCustom : autoRowLabel
+    const rowLabel = displayRowLabel.trim() || autoRowLabel
     let labelRunStart = -1
     let labelText = ""
 
@@ -295,10 +326,14 @@ export function deriveLayout(grid: SeatGrid): {
         const x = Math.round((c + 0.5) * CELL_PX)
         const y = Math.round((r + 0.5) * CELL_PX)
         const colLabelCustom = grid.colLabels?.[c]
-        // Same blank-fallback as the row label — seat_number must be non-empty
-        // for the DB unique constraint and the API validator.
-        const displayNum = colLabelCustom !== undefined ? colLabelCustom : String(seatStart + c)
-        const num = displayNum.trim() || String(seatStart + c)
+        // Auto-derive uses the non-empty column rank so blank gap cols don't
+        // waste seat numbers — col 5 with a gap at col 4 still gets the next
+        // number, not "skipped". Same blank-fallback as the row label.
+        const autoNum = nonEmptyColRank[c] >= 0
+          ? String(seatStart + nonEmptyColRank[c])
+          : String(seatStart + c)
+        const displayNum = colLabelCustom !== undefined ? colLabelCustom : autoNum
+        const num = displayNum.trim() || autoNum
         seats.push({
           id: `${sec.id}#${r}#${c}`,
           section: sec.name,
@@ -425,6 +460,74 @@ export function hydrateGrid(
   // when missing (legacy events saved before the meta entry existed).
   const { meta, decor: apiDecor } = extractMeta(apiDecorRaw)
 
+  // -----------------------------------------------------------------------
+  // Fast path — meta present. Reconstruct each seat's original (r, c) from
+  // its saved (x, y) directly. deriveLayout emits x = (c+0.5)*CELL_PX and
+  // y = (r+0.5)*CELL_PX, so the inverse `(coord/CELL_PX) - 0.5` rounded to
+  // the nearest integer recovers the EXACT original cell — including any
+  // empty rows/columns the admin left in for visual spacing.
+  // -----------------------------------------------------------------------
+  if (meta && Number.isFinite(meta.rows) && Number.isFinite(meta.cols)) {
+    const metaRows = Math.max(1, Math.round(meta.rows))
+    const metaCols = Math.max(1, Math.round(meta.cols))
+    const cells: GridCell[][] = []
+    for (let r = 0; r < metaRows; r++) {
+      cells.push(Array.from({ length: metaCols }, () => ({ kind: "empty" }) as GridCell))
+    }
+
+    const sections: Record<string, SectionMeta> = {}
+    const sectionByName = new Map<string, SectionMeta>()
+    for (const s of apiSeats) {
+      if (s.x == null || s.y == null) continue
+      const r = Math.round(Number(s.y) / CELL_PX - 0.5)
+      const c = Math.round(Number(s.x) / CELL_PX - 0.5)
+      if (r < 0 || r >= metaRows || c < 0 || c >= metaCols) continue
+      const name = (s.section || "Section").toString()
+      let sec = sectionByName.get(name)
+      if (!sec) {
+        sec = {
+          id: uid("section"),
+          name,
+          defaultTicketTypeId: (s.ticket_type_id || "").toString(),
+        }
+        sectionByName.set(name, sec)
+        sections[sec.id] = sec
+      }
+      cells[r][c] = { kind: "seat", sectionId: sec.id }
+    }
+
+    // Free-form stage rects → grid.stages (in cell units).
+    const stages: StageBlock[] = []
+    for (const d of apiDecor) {
+      if (d.kind !== "rect") continue
+      const xPx = Number(d.x ?? 0)
+      const yPx = Number(d.y ?? 0)
+      const wPx = Number(d.width  ?? 200)
+      const hPx = Number(d.height ?? 30)
+      stages.push({
+        id: uid("stage"),
+        x: xPx / CELL_PX,
+        y: yPx / CELL_PX,
+        width:  Math.max(1, wPx / CELL_PX),
+        height: Math.max(1, hPx / CELL_PX),
+        label: d.label || "STAGE",
+      })
+    }
+
+    return {
+      rows: metaRows, cols: metaCols, cells, sections, stages,
+      rowLabels: meta.rowLabels ? meta.rowLabels.map(v => v ?? undefined) : undefined,
+      colLabels: meta.colLabels ? meta.colLabels.map(v => v ?? undefined) : undefined,
+      seatNumberStart: meta.seatNumberStart ?? undefined,
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Legacy fallback — no meta entry. Cluster seats by label and pack them
+  // into consecutive rows (empty rows ARE lost here, but only for legacy
+  // events saved before the meta entry shipped).
+  // -----------------------------------------------------------------------
+
   // Bucket seats by row_label to determine row count + the row order via
   // mean Y. Within each row, sort by X to determine column slots.
   interface RowBucket { label: string; seats: ApiSeatLike[]; meanY: number }
@@ -512,38 +615,6 @@ export function hydrateGrid(
     } else if (extraRow < rows) {
       cells[extraRow][0] = { kind: "label", text: d.label || "Label" }
       extraRow += 1
-    }
-  }
-
-  // Apply meta overrides — these are authoritative when the seat map was
-  // saved with the spreadsheet builder. We resize the cells grid to the
-  // saved rows × cols (preserving entirely-empty rows/columns the inference
-  // can't see), and replace the inferred row/col label arrays.
-  if (meta && Number.isFinite(meta.rows) && Number.isFinite(meta.cols)) {
-    const metaRows = Math.max(1, Math.round(meta.rows))
-    const metaCols = Math.max(1, Math.round(meta.cols))
-    if (metaRows !== rows || metaCols !== cols) {
-      const next: GridCell[][] = []
-      for (let r = 0; r < metaRows; r++) {
-        const row: GridCell[] = []
-        for (let c = 0; c < metaCols; c++) {
-          row.push(cells[r]?.[c] ?? { kind: "empty" })
-        }
-        next.push(row)
-      }
-      return {
-        rows: metaRows, cols: metaCols, cells: next, sections, stages,
-        rowLabels: meta.rowLabels ? meta.rowLabels.map(v => v ?? undefined) : rowLabels,
-        colLabels: meta.colLabels ? meta.colLabels.map(v => v ?? undefined) : undefined,
-        seatNumberStart: meta.seatNumberStart ?? undefined,
-      }
-    }
-    // Same dimensions — just apply the label overrides.
-    return {
-      rows, cols, cells, sections, stages,
-      rowLabels: meta.rowLabels ? meta.rowLabels.map(v => v ?? undefined) : rowLabels,
-      colLabels: meta.colLabels ? meta.colLabels.map(v => v ?? undefined) : undefined,
-      seatNumberStart: meta.seatNumberStart ?? undefined,
     }
   }
 
