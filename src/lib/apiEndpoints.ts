@@ -517,6 +517,11 @@ export interface ReservedEventTicketType {
   // The admin builder displays this alongside the painted seat count so we
   // can see whether the seat map matches the organizer's intent.
   quantity_total?: number | string
+  // True when the organizer marked this tier as free-seating (GA-style):
+  // the admin still paints seats for the zone (so the venue map shows it)
+  // but those seats render in the consumer picker as a non-clickable area.
+  // See myscope-api/migrations/2026-06-09-free-seating-tier.sql.
+  is_free_seating?: boolean
 }
 
 export const reservedEventsAPI = {

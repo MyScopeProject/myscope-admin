@@ -456,6 +456,11 @@ function BuilderInner() {
                       style={{ background: tierColor(i) }}
                     />
                     <span className="flex-1 truncate font-medium text-foreground">{tt.name}</span>
+                    {tt.is_free_seating && (
+                      <span className="shrink-0 rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                        Free
+                      </span>
+                    )}
                     <span className="shrink-0 text-muted-foreground">
                       LKR {Number(tt.price).toLocaleString()}
                     </span>
