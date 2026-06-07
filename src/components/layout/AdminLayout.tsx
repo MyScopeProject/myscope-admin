@@ -43,6 +43,7 @@ const allNavItems: NavItem[] = [
   { name: "Organizers", href: "/organizers", icon: Building2 },
   { name: "Events", href: "/events", icon: Calendar },
   { name: "Event Review", href: "/events/review", icon: CalendarCheck },
+  { name: "Edit Review", href: "/events/pending-edits", icon: CalendarCheck },
   { name: "Create for organizer", href: "/events/create", icon: CalendarPlus },
   { name: "Hero Carousel", href: "/hero-carousel", icon: Star },
   { name: "Past Events", href: "/past-events", icon: History },

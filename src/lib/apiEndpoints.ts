@@ -37,6 +37,32 @@ export const adminAPI = {
   setEventFeatured: (id: string, featured: boolean) =>
     api.patch(`/admin/events/${id}/featured`, { featured }),
 
+  // Pending-edits moderation queue. When an organizer edits an APPROVED
+  // event, the change is queued here instead of going live. Admin reviews
+  // the diff and either applies it to the live row or declines (with an
+  // optional reason that the organizer sees on their edit page).
+  listPendingEdits: () =>
+    api.get<{
+      success: boolean
+      data: {
+        pending_edits: Array<{
+          id: string
+          event_id: string
+          submitted_by: string
+          submitted_at: string
+          status: 'pending' | 'approved' | 'declined'
+          changes: Record<string, unknown>
+          events: { id: string; title: string; organizer_id: string; banner_url: string | null } | null
+        }>
+      }
+    }>('/admin/events/pending-edits'),
+  getPendingEdit: (id: string) =>
+    api.get(`/admin/events/pending-edits/${id}`),
+  approvePendingEdit: (id: string) =>
+    api.post(`/admin/events/pending-edits/${id}/approve`),
+  declinePendingEdit: (id: string, reason?: string) =>
+    api.post(`/admin/events/pending-edits/${id}/decline`, reason ? { reason } : {}),
+
   // Picker source for the "create event for organizer" page — every approved
   // organizer in the system. Filtered/searched client-side since the list is
   // small and we don't need pagination.
