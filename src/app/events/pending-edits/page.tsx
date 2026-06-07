@@ -28,8 +28,19 @@ interface PendingEditRow {
   submitted_by: string
   submitted_at: string
   status: "pending" | "approved" | "declined"
+  // Action type — the queue stores edits, postpones, and pause/resume-sales
+  // proposals. Render differently per kind so the admin doesn't see an
+  // empty "diff" for actions that have no field-level payload.
+  kind?: "edit" | "postpone" | "pause_sales" | "resume_sales"
   changes: Record<string, unknown>
   events: { id: string; title: string; organizer_id: string; banner_url: string | null } | null
+}
+
+const KIND_LABEL: Record<NonNullable<PendingEditRow["kind"]>, string> = {
+  edit: "Field edit",
+  postpone: "Postpone",
+  pause_sales: "Pause sales",
+  resume_sales: "Resume sales",
 }
 
 // Field renderers — convert raw DB values into something the admin can
@@ -210,7 +221,13 @@ function PendingEditsContent() {
               const current = currentByEditId[row.id] ?? {}
               const isExpanded = expandedId === row.id
               const busy = busyId === row.id
+              const kind = row.kind ?? "edit"
               const fields = Object.keys(proposed)
+              const kindLabel = KIND_LABEL[kind]
+              // Postpone payload often has only a couple fields; pause/resume
+              // have none. We swap the headline ("N fields changed") and
+              // the diff-table shape per kind so the page doesn't lie.
+              const isAction = kind === "postpone" || kind === "pause_sales" || kind === "resume_sales"
               return (
                 <li
                   key={row.id}
@@ -218,29 +235,43 @@ function PendingEditsContent() {
                 >
                   <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-semibold text-foreground truncate">
                           {event?.title ?? "(deleted event)"}
                         </span>
                         <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">
                           <Clock className="h-3 w-3" /> Pending
                         </span>
+                        <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
+                          {kindLabel}
+                        </span>
                       </div>
                       <div className="mt-0.5 text-xs text-muted-foreground">
-                        {fields.length} field{fields.length === 1 ? "" : "s"} changed · submitted{" "}
+                        {kind === "edit"
+                          ? <>{fields.length} field{fields.length === 1 ? "" : "s"} changed</>
+                          : kind === "postpone"
+                            ? "Postpone request"
+                            : kind === "pause_sales"
+                              ? "Pause all ticket sales"
+                              : "Resume all ticket sales"}
+                        {" · submitted "}
                         {new Date(row.submitted_at).toLocaleString("en-US", {
                           month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
                         })}
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => expand(row)}
-                        className="rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium hover:bg-muted"
-                      >
-                        {isExpanded ? "Hide diff" : "View diff"}
-                      </button>
+                      {/* Pause/Resume sales have no payload — the action is the
+                          intent, so we hide the diff toggle for them. */}
+                      {!(kind === "pause_sales" || kind === "resume_sales") && (
+                        <button
+                          type="button"
+                          onClick={() => expand(row)}
+                          className="rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium hover:bg-muted"
+                        >
+                          {isExpanded ? (isAction ? "Hide details" : "Hide diff") : (isAction ? "View details" : "View diff")}
+                        </button>
+                      )}
                       <button
                         type="button"
                         disabled={busy}
@@ -263,6 +294,28 @@ function PendingEditsContent() {
 
                   {isExpanded && (
                     <div className="border-t border-border bg-muted/20 p-4">
+                      {kind === "postpone" ? (
+                        // Postpone shows the requested settings inline — there's
+                        // no field-by-field "before" because the source-of-truth
+                        // postpone state is encoded across multiple events columns.
+                        <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-[max-content_1fr]">
+                          {Object.entries({
+                            new_start_time: "New start time",
+                            reason: "Reason",
+                            notify: "Notify attendees",
+                            close_sales: "Close sales",
+                          }).map(([key, label]) => (
+                            <React.Fragment key={key}>
+                              <dt className="font-medium text-muted-foreground">{label}</dt>
+                              <dd className="text-foreground">
+                                {key === "new_start_time" && !proposed[key]
+                                  ? "Date to be announced"
+                                  : formatValue(proposed[key])}
+                              </dd>
+                            </React.Fragment>
+                          ))}
+                        </dl>
+                      ) : (
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                           <thead className="text-left text-xs uppercase tracking-wider text-muted-foreground">
@@ -288,6 +341,7 @@ function PendingEditsContent() {
                           </tbody>
                         </table>
                       </div>
+                      )}
                     </div>
                   )}
                 </li>
