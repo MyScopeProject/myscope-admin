@@ -28,10 +28,19 @@ interface PendingEditRow {
   submitted_by: string
   submitted_at: string
   status: "pending" | "approved" | "declined"
-  // Action type — the queue stores edits, postpones, and pause/resume-sales
-  // proposals. Render differently per kind so the admin doesn't see an
-  // empty "diff" for actions that have no field-level payload.
-  kind?: "edit" | "postpone" | "pause_sales" | "resume_sales"
+  // Action type — the queue stores edits, postpones, pause/resume-sales,
+  // and ticket-tier CRUD proposals. Render differently per kind so the
+  // admin doesn't see an empty "diff" for actions that have no field-
+  // level payload (e.g. pause/resume) or a misleading diff for actions
+  // that aren't field edits at all (e.g. ticket-tier delete).
+  kind?:
+    | "edit"
+    | "postpone"
+    | "pause_sales"
+    | "resume_sales"
+    | "ticket_type_create"
+    | "ticket_type_update"
+    | "ticket_type_delete"
   changes: Record<string, unknown>
   events: { id: string; title: string; organizer_id: string; banner_url: string | null } | null
 }
@@ -41,6 +50,9 @@ const KIND_LABEL: Record<NonNullable<PendingEditRow["kind"]>, string> = {
   postpone: "Postpone",
   pause_sales: "Pause sales",
   resume_sales: "Resume sales",
+  ticket_type_create: "Add ticket tier",
+  ticket_type_update: "Update ticket tier",
+  ticket_type_delete: "Delete ticket tier",
 }
 
 // Field renderers — convert raw DB values into something the admin can
@@ -65,6 +77,21 @@ const formatValue = (value: unknown): string => {
     return value.length > 140 ? value.slice(0, 140) + "…" : value
   }
   return JSON.stringify(value)
+}
+
+// Permissive equality used to drop unchanged rows from the diff table.
+// Backend already strips matching fields when persisting, but stale
+// pending rows from before that fix still get filtered here so the
+// admin never sees a noisy "20 fields changed" diff that's actually one.
+const isSameValue = (a: unknown, b: unknown): boolean => {
+  if (a === b) return true
+  if (a == null && b == null) return true
+  if (typeof a === "string" && typeof b === "string") {
+    const da = Date.parse(a)
+    const db = Date.parse(b)
+    if (!Number.isNaN(da) && !Number.isNaN(db)) return da === db
+  }
+  return false
 }
 
 const labelFor = (key: string): string => {
@@ -222,12 +249,27 @@ function PendingEditsContent() {
               const isExpanded = expandedId === row.id
               const busy = busyId === row.id
               const kind = row.kind ?? "edit"
-              const fields = Object.keys(proposed)
+              const allFields = Object.keys(proposed)
+              // When the current event snapshot is loaded for this row,
+              // drop fields whose proposed value matches the live one —
+              // those are no-op carryovers and clutter the diff. Until
+              // the snapshot loads we render all fields; once loaded we
+              // render only actually-different rows.
+              const hasCurrent = Object.keys(current).length > 0
+              const fields = hasCurrent
+                ? allFields.filter(f => !isSameValue(proposed[f], current[f]))
+                : allFields
               const kindLabel = KIND_LABEL[kind]
-              // Postpone payload often has only a couple fields; pause/resume
-              // have none. We swap the headline ("N fields changed") and
-              // the diff-table shape per kind so the page doesn't lie.
+              // Render differently per kind so the page doesn't lie:
+              //   - postpone has a small fixed payload (date / reason / flags)
+              //   - pause/resume have no payload at all
+              //   - ticket_type_* describe a CRUD op on a tier, not a
+              //     field diff against the live event
               const isAction = kind === "postpone" || kind === "pause_sales" || kind === "resume_sales"
+              const isTicketTierAction =
+                kind === "ticket_type_create" ||
+                kind === "ticket_type_update" ||
+                kind === "ticket_type_delete"
               return (
                 <li
                   key={row.id}
@@ -253,7 +295,13 @@ function PendingEditsContent() {
                             ? "Postpone request"
                             : kind === "pause_sales"
                               ? "Pause all ticket sales"
-                              : "Resume all ticket sales"}
+                              : kind === "resume_sales"
+                                ? "Resume all ticket sales"
+                                : kind === "ticket_type_create"
+                                  ? `New tier: ${String(proposed.name ?? "(unnamed)")}`
+                                  : kind === "ticket_type_update"
+                                    ? "Ticket tier update"
+                                    : `Delete tier${proposed.name ? `: ${String(proposed.name)}` : ""}`}
                         {" · submitted "}
                         {new Date(row.submitted_at).toLocaleString("en-US", {
                           month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
@@ -261,15 +309,18 @@ function PendingEditsContent() {
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      {/* Pause/Resume sales have no payload — the action is the
-                          intent, so we hide the diff toggle for them. */}
-                      {!(kind === "pause_sales" || kind === "resume_sales") && (
+                      {/* Pause/resume sales and ticket-tier deletes have no
+                          payload to view — the action IS the intent. Other
+                          kinds get the diff/details toggle. */}
+                      {!(kind === "pause_sales" || kind === "resume_sales" || kind === "ticket_type_delete") && (
                         <button
                           type="button"
                           onClick={() => expand(row)}
                           className="rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium hover:bg-muted"
                         >
-                          {isExpanded ? (isAction ? "Hide details" : "Hide diff") : (isAction ? "View details" : "View diff")}
+                          {isExpanded
+                            ? (isTicketTierAction || isAction ? "Hide details" : "Hide diff")
+                            : (isTicketTierAction || isAction ? "View details" : "View diff")}
                         </button>
                       )}
                       <button
@@ -314,6 +365,48 @@ function PendingEditsContent() {
                               </dd>
                             </React.Fragment>
                           ))}
+                        </dl>
+                      ) : kind === "ticket_type_create" ? (
+                        // Tier-create: show the full proposed tier payload
+                        // as a property list. There's no "current" — this
+                        // tier doesn't exist yet on the live event.
+                        <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-[max-content_1fr]">
+                          {[
+                            ["name", "Name"],
+                            ["description", "Description"],
+                            ["price", "Price (LKR)"],
+                            ["quantity_total", "Quantity"],
+                            ["per_order_limit", "Per-order limit"],
+                            ["is_free_seating", "Free seating tier"],
+                            ["is_active", "Active"],
+                            ["sale_start", "Sale starts"],
+                            ["sale_end", "Sale ends"],
+                          ]
+                            .filter(([key]) => proposed[key] !== undefined && proposed[key] !== null && proposed[key] !== "")
+                            .map(([key, label]) => (
+                              <React.Fragment key={key}>
+                                <dt className="font-medium text-muted-foreground">{label}</dt>
+                                <dd className="text-foreground">{formatValue(proposed[key])}</dd>
+                              </React.Fragment>
+                            ))}
+                        </dl>
+                      ) : kind === "ticket_type_update" ? (
+                        // Tier-update: payload is { id, ...changedFields }.
+                        // Pull the live tier from current event's ticket
+                        // types (admin already has it via the /pending-edits/:id
+                        // endpoint when expanded — we read it through a
+                        // separate fetch if needed; for now show proposed
+                        // changes only since the backend already strips
+                        // unchanged fields).
+                        <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-[max-content_1fr]">
+                          {Object.entries(proposed)
+                            .filter(([key]) => key !== "id")
+                            .map(([key, value]) => (
+                              <React.Fragment key={key}>
+                                <dt className="font-medium text-muted-foreground">{labelFor(key)}</dt>
+                                <dd className="text-foreground">{formatValue(value)}</dd>
+                              </React.Fragment>
+                            ))}
                         </dl>
                       ) : (
                       <div className="overflow-x-auto">
