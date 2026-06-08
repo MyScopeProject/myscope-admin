@@ -20,7 +20,10 @@ export const adminAPI = {
   updateUser: (id: string, data: any) => api.put(`/admin/users/${id}`, data),
   banUser: (id: string) => api.put(`/admin/users/${id}/ban`),
   unbanUser: (id: string) => api.put(`/admin/users/${id}/unban`),
-  deleteUser: (id: string) => api.delete(`/admin/users/${id}`),
+  // Pass { force: true } to bypass FK blockers (payouts, shop_orders,
+  // scanner_sessions, events). Destructive — wipes those records too.
+  deleteUser: (id: string, opts?: { force?: boolean }) =>
+    api.delete(`/admin/users/${id}`, opts?.force ? { params: { force: 'true' } } : undefined),
   
   // Event Management — backend supports list/get/approve/reject/delete. Create
   // also lives here for the "admin sets up an event on behalf of an organizer"

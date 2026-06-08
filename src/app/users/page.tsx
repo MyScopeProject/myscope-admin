@@ -74,7 +74,29 @@ export default function UsersPage() {
       toast.success("User deleted successfully")
       fetchUsers()
     } catch (err: any) {
-      toast.error(err.response?.data?.message || "Failed to delete user")
+      // FK violation → user has linked records (payouts / shop_orders /
+      // scanner_sessions / events). Offer a force-delete escape hatch that
+      // wipes those records too. Backend logs the destruction to AdminLogs.
+      const status = err?.response?.status
+      const code = err?.response?.data?.data?.code
+      const message = err?.response?.data?.message || "Failed to delete user"
+      if (status === 409 && code === "FK_VIOLATION") {
+        const proceed = window.confirm(
+          `${message}\n\n` +
+          `Force-delete will WIPE the linked records (payouts, shop orders, scanner sessions, events) ` +
+          `before deleting the user. This is destructive and irreversible. Proceed?`,
+        )
+        if (!proceed) return
+        try {
+          await adminAPI.deleteUser(userId, { force: true })
+          toast.success("User force-deleted (linked records wiped)")
+          fetchUsers()
+        } catch (forceErr: any) {
+          toast.error(forceErr?.response?.data?.message || "Force delete failed")
+        }
+        return
+      }
+      toast.error(message)
     }
   }
 
