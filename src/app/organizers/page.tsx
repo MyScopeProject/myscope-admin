@@ -21,6 +21,7 @@ import {
   Loader,
   Search,
   ShieldOff,
+  Trash2,
   User,
 } from "lucide-react"
 
@@ -84,6 +85,7 @@ export default function OrganizersPage() {
   const [pendingActionId, setPendingActionId] = useState<string | null>(null)
   const [rejectingFor, setRejectingFor] = useState<OrganizerProfile | null>(null)
   const [revokingFor, setRevokingFor] = useState<OrganizerProfile | null>(null)
+  const [deletingFor, setDeletingFor] = useState<OrganizerProfile | null>(null)
   // Revoke-only state — the blockers list comes from a preflight call when the
   // modal opens so the admin can see what's in flight before deciding to force.
   const [revokeBlockers, setRevokeBlockers] = useState<Blocker[] | null>(null)
@@ -170,6 +172,28 @@ export default function OrganizersPage() {
       const fresh = err?.response?.data?.data?.blockers as Blocker[] | undefined
       if (fresh) setRevokeBlockers(fresh)
       toast.error(err?.response?.data?.message || "Failed to revoke")
+    } finally {
+      setPendingActionId(null)
+    }
+  }
+
+  // Hard-delete the organizer profile. Pending/rejected applications skip
+  // the reason+force ceremony; approved organizers need reason ≥10 and
+  // optionally force=true to bypass live-event blockers. The submit
+  // function receives both — DeleteModal omits them for non-approved.
+  const submitDeletion = async (reason: string, force: boolean) => {
+    if (!deletingFor) return
+    setPendingActionId(deletingFor.id)
+    try {
+      await adminAPI.deleteOrganizer(deletingFor.id, {
+        ...(reason ? { reason } : {}),
+        ...(force ? { force: true } : {}),
+      })
+      toast.success("Organizer deleted")
+      setProfiles((prev) => prev.filter((p) => p.id !== deletingFor.id))
+      setDeletingFor(null)
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || "Failed to delete")
     } finally {
       setPendingActionId(null)
     }
@@ -275,6 +299,7 @@ export default function OrganizersPage() {
                   onApprove={() => handleApprove(p)}
                   onReject={() => setRejectingFor(p)}
                   onRevoke={() => handleOpenRevoke(p)}
+                  onDelete={() => setDeletingFor(p)}
                 />
               ))}
             </div>
@@ -303,6 +328,15 @@ export default function OrganizersPage() {
             onSubmit={submitRevocation}
           />
         )}
+
+        {deletingFor && (
+          <DeleteModal
+            profile={deletingFor}
+            busy={pendingActionId === deletingFor.id}
+            onClose={() => setDeletingFor(null)}
+            onSubmit={submitDeletion}
+          />
+        )}
       </AdminLayout>
     </ProtectedRoute>
   )
@@ -316,6 +350,7 @@ function ProfileCard({
   onApprove,
   onReject,
   onRevoke,
+  onDelete,
 }: {
   profile: OrganizerProfile
   busy: boolean
@@ -324,6 +359,7 @@ function ProfileCard({
   onApprove: () => void
   onReject: () => void
   onRevoke: () => void
+  onDelete: () => void
 }) {
   const u = profile.users
   return (
@@ -450,6 +486,21 @@ function ProfileCard({
           </button>
         </div>
       )}
+
+      {/* Delete — always available regardless of tab. Revoke is the
+          softer flow (keeps profile row, drops role); this is the
+          irreversible cleanup affordance. */}
+      <div className={`flex items-center justify-end mt-2 ${showActions || showRevoke ? "" : "pt-4 border-t border-border"}`}>
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition disabled:opacity-50"
+        >
+          {busy ? <Loader className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+          Delete organizer
+        </button>
+      </div>
     </div>
   )
 }
@@ -706,6 +757,101 @@ function RevokeModal({
               : hasBlockers
                 ? "Force revoke"
                 : "Revoke organizer"}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Confirmation modal for hard-deleting an organizer profile. Two modes:
+//   1. Approved + not-deactivated → reason (>=10 chars) required, optional
+//      force-bypass for any live-event/payout blockers the backend reports.
+//   2. Anything else (pending, rejected, already-revoked) → simple confirm.
+function DeleteModal({
+  profile,
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  profile: OrganizerProfile
+  busy: boolean
+  onClose: () => void
+  onSubmit: (reason: string, force: boolean) => void
+}) {
+  const isApproved = profile.verification_status === "approved"
+  const [reason, setReason] = useState("")
+  const [force, setForce] = useState(false)
+  const trimmed = reason.trim()
+  const reasonValid = !isApproved || trimmed.length >= 10
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div className="bg-card border border-border rounded-lg max-w-md w-full p-6">
+        <div className="flex items-start gap-3 mb-4">
+          <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-destructive/15 text-destructive">
+            <Trash2 className="h-4 w-4" />
+          </span>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-lg font-semibold text-foreground">Delete organizer?</h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              {profile.business_name}
+            </p>
+          </div>
+        </div>
+
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400 mb-4">
+          This removes the organizer profile permanently. The user account stays
+          (role resets to <span className="font-mono">&apos;user&apos;</span>).
+          {" "}For an approved organizer, prefer <strong>Revoke</strong> if you want to
+          keep the profile row for history.
+        </div>
+
+        {isApproved && (
+          <>
+            <label className="block text-sm font-medium text-foreground mb-2">Reason (≥10 chars)</label>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={3}
+              className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+              placeholder="e.g. duplicate account; merged with main organizer profile"
+              maxLength={1000}
+              autoFocus
+            />
+            <div className="text-xs text-muted-foreground mt-1">{trimmed.length} / 1000</div>
+
+            <label className="mt-3 flex items-start gap-2 cursor-pointer text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={force}
+                onChange={(e) => setForce(e.target.checked)}
+                className="mt-0.5 h-3.5 w-3.5 accent-destructive"
+              />
+              <span>
+                Force-override blockers (active events, pending payouts, etc.). Only use when
+                you&apos;ve already reconciled those manually.
+              </span>
+            </label>
+          </>
+        )}
+
+        <div className="flex gap-3 pt-4">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="flex-1 px-4 py-2 bg-muted text-foreground rounded-lg hover:opacity-90 transition disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={busy || !reasonValid}
+            onClick={() => onSubmit(trimmed, force)}
+            className="flex-1 px-4 py-2 bg-destructive text-destructive-foreground rounded-md hover:opacity-90 transition disabled:opacity-50"
+          >
+            {busy ? "Deleting…" : "Delete"}
           </button>
         </div>
       </div>

@@ -256,6 +256,19 @@ export const adminAPI = {
   canRevokeOrganizer: (id: string) => api.get(`/admin/organizers/${id}/can-revoke`),
   revokeOrganizer: (id: string, reason: string, force = false) =>
     api.post(`/admin/organizers/${id}/revoke`, { reason, force }),
+  // Hard-delete the organizer profile. Pending/rejected applications
+  // need no reason/force; approved organizers need reason (>=10 chars)
+  // and optionally force=true to bypass blockers (active events, payouts).
+  deleteOrganizer: (
+    id: string,
+    opts?: { reason?: string; force?: boolean },
+  ) =>
+    api.delete(`/admin/organizers/${id}`, {
+      data: {
+        ...(opts?.reason ? { reason: opts.reason } : {}),
+        ...(opts?.force ? { force: true } : {}),
+      },
+    }),
 
   // Refunds (Step 12)
   refundBooking: (booking_id: string, reason: string) =>
