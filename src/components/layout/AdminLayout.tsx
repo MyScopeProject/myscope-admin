@@ -179,9 +179,15 @@ export function AdminLayout({ children, user }: AdminLayoutProps) {
             const badge =
               item.href === '/organizers' ? pending.organizers :
               item.href === '/events/review' ? pending.eventReview :
-              item.href === '/payouts' ? pending.payouts : 0
+              item.href === '/payouts' ? pending.payouts :
+              item.href === '/events/pending-edits' ? pending.editReview :
+              item.href === '/reserved-seating-events' ? pending.reservedLayouts : 0
 
             const badgeLabel = badge > 99 ? '99+' : String(badge)
+            // Tooltip surfaces the remaining-work count too — not just the
+            // page name — so it's useful collapsed AND expanded (native
+            // title tooltips work regardless of hover target size).
+            const tooltip = badge > 0 ? `${item.name} · ${badgeLabel} pending` : item.name
 
             return (
               <Link
@@ -193,7 +199,7 @@ export function AdminLayout({ children, user }: AdminLayoutProps) {
                     ? "bg-primary/10 text-primary"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground"
                 } ${sidebarCollapsed ? "justify-center" : ""}`}
-                title={sidebarCollapsed ? item.name : undefined}
+                title={tooltip}
               >
                 {/* Icon with badge dot when collapsed */}
                 <span className="relative flex-shrink-0">

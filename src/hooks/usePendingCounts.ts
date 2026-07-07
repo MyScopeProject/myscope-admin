@@ -2,12 +2,16 @@ import { useState, useEffect, useCallback } from 'react'
 import api from '@/lib/api'
 
 export interface PendingCounts {
-  organizers: number   // pending organizer applications
-  eventReview: number  // events awaiting approval
-  payouts: number      // requested (unpaid) payouts
+  organizers: number      // pending organizer applications
+  eventReview: number     // events awaiting approval
+  payouts: number         // requested (unpaid) payouts
+  editReview: number      // organizer edits to LIVE events awaiting approve/decline
+  reservedLayouts: number // reserved events awaiting an admin-built seat map
 }
 
-const EMPTY: PendingCounts = { organizers: 0, eventReview: 0, payouts: 0 }
+const EMPTY: PendingCounts = {
+  organizers: 0, eventReview: 0, payouts: 0, editReview: 0, reservedLayouts: 0,
+}
 const POLL_INTERVAL = 30_000
 
 export function usePendingCounts(enabled = true) {
@@ -16,10 +20,12 @@ export function usePendingCounts(enabled = true) {
   const refresh = useCallback(async () => {
     if (!enabled) return
     try {
-      const [orgRes, evRes, payRes] = await Promise.allSettled([
+      const [orgRes, evRes, payRes, editRes, layoutRes] = await Promise.allSettled([
         api.get('/admin/organizers', { params: { status: 'pending' } }),
         api.get('/admin/events', { params: { approvalStatus: 'pending', limit: 1 } }),
         api.get('/admin/payouts', { params: { status: 'requested' } }),
+        api.get('/admin/events/pending-edits'),
+        api.get('/admin/events/layout-requests'),
       ])
 
       // GET /admin/organizers → { data: { profiles: [...] } }
@@ -40,7 +46,19 @@ export function usePendingCounts(enabled = true) {
           ? (payRes.value?.data?.data?.payouts?.length ?? 0)
           : 0
 
-      setCounts({ organizers, eventReview, payouts })
+      // GET /admin/events/pending-edits → { data: { pending_edits: [...] } }
+      const editReview =
+        editRes.status === 'fulfilled'
+          ? (editRes.value?.data?.data?.pending_edits?.length ?? 0)
+          : 0
+
+      // GET /admin/events/layout-requests → { data: { requests: [...] } }
+      const reservedLayouts =
+        layoutRes.status === 'fulfilled'
+          ? (layoutRes.value?.data?.data?.requests?.length ?? 0)
+          : 0
+
+      setCounts({ organizers, eventReview, payouts, editReview, reservedLayouts })
     } catch {
       // badge counts are non-critical — silently ignore
     }
