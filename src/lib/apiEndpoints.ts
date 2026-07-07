@@ -102,7 +102,7 @@ export const adminAPI = {
     start_time: string
     end_time?: string | null
     capacity?: number | null
-    seating_mode?: 'none' | 'free'
+    seating_mode?: 'none' | 'free' | 'zoned' | 'reserved'
     ticket_types: Array<{
       name: string
       description?: string | null
