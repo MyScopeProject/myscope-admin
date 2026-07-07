@@ -343,6 +343,17 @@ export const adminAPI = {
 export const adminEventManage = {
   get: (id: string) => api.get(`/organizer/events/${id}`),
   update: (id: string, data: any) => api.patch(`/organizer/events/${id}`, data),
+  // Reuses the same admin banner uploader as the "create event for organizer"
+  // wizard — one generic image endpoint, no coupling to event creation.
+  uploadBanner: (file: File) => {
+    const fd = new FormData()
+    fd.append("image", file)
+    return api.post<{ success: boolean; data: { url: string } }>(
+      "/admin/events/upload-banner",
+      fd,
+      { headers: { "Content-Type": "multipart/form-data" } },
+    )
+  },
   pauseSales: (id: string) => api.post(`/organizer/events/${id}/pause-sales`),
   resumeSales: (id: string) => api.post(`/organizer/events/${id}/resume-sales`),
   // Convenience fee toggle is admin-only — lives on the admin events router

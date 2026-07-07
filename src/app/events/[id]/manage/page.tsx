@@ -14,17 +14,18 @@ import { EventCommBillingCard } from "@/components/events/event-comm-billing-car
 import toast from "react-hot-toast"
 import {
   AlertCircle, ArrowLeft, BarChart2, Bell, Calendar, CalendarClock, CheckCircle, CheckCircle2,
-  ClipboardList, Copy, Loader, Mail, MapPin, Megaphone, Minus, Pause, Play, Plus, QrCode,
+  ClipboardList, Copy, Edit3, ImageIcon, Loader, Mail, MapPin, Megaphone, Minus, Pause, Play, Plus, QrCode,
   RefreshCw, RotateCcw, Send, Tag, Ticket as TicketIcon, Trash2, TrendingUp, Users,
   Wallet, WalletMinimal, X, XCircle,
 } from "lucide-react"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL?.replace(/\/api\/?$/, "") || "http://localhost:5000"
 
-type Tab = "overview" | "tickets" | "attendees" | "checkin" | "scanners" | "promo" | "waitlist" | "comms" | "invite"
+type Tab = "overview" | "details" | "tickets" | "attendees" | "checkin" | "scanners" | "promo" | "waitlist" | "comms" | "invite"
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "overview", label: "Overview" },
+  { key: "details", label: "Details" },
   { key: "tickets", label: "Tickets" },
   { key: "attendees", label: "Attendees" },
   { key: "checkin", label: "Check-in" },
@@ -66,6 +67,7 @@ export default function ManageEventPage() {
   const [tab, setTab] = useState<Tab>("overview")
   const [event, setEvent] = useState<any>(null)
   const [tickets, setTickets] = useState<any[]>([])
+  const [pendingEdit, setPendingEdit] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [postponeOpen, setPostponeOpen] = useState(false)
@@ -75,6 +77,7 @@ export default function ManageEventPage() {
       const res = await adminEventManage.get(id)
       setEvent(res.data?.data?.event ?? null)
       setTickets(res.data?.data?.ticket_types ?? [])
+      setPendingEdit(res.data?.data?.pending_edit ?? null)
     } catch (e: any) {
       toast.error(e?.response?.data?.message || "Couldn't load event.")
     } finally {
@@ -259,6 +262,26 @@ export default function ManageEventPage() {
             />
           )}
 
+          {/* A live (approved) event's edits get queued into event_pending_edits
+              rather than applied directly — same rule that applies to organizer
+              edits. Surfaced here so an admin editing from this page isn't
+              surprised their change didn't take effect immediately. */}
+          {pendingEdit && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-700 dark:text-amber-400">
+              <Send className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="flex-1">
+                <div className="font-semibold">A change is awaiting review</div>
+                <p className="mt-0.5 text-xs">
+                  Submitted {formatWhen(pendingEdit.submitted_at)}. This event is live, so edits queue
+                  instead of applying immediately.{" "}
+                  <Link href="/events/pending-edits" className="underline hover:no-underline">
+                    Review in Pending edits
+                  </Link>
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Tabs */}
           <div className="flex flex-wrap gap-2 border-b border-border pb-2">
             {TABS.map((t) => (
@@ -270,6 +293,14 @@ export default function ManageEventPage() {
           </div>
 
           {tab === "overview" && <OverviewTab eventId={id} />}
+          {tab === "details" && (
+            <DetailsTab
+              eventId={id}
+              event={event}
+              pendingEdit={pendingEdit}
+              onSaved={loadEvent}
+            />
+          )}
           {tab === "tickets" && <TicketsTab eventId={id} tickets={tickets} reload={loadEvent} />}
           {tab === "attendees" && <AttendeesTab eventId={id} />}
           {tab === "checkin" && <CheckinTab eventId={id} />}
@@ -487,6 +518,288 @@ function OverviewTab({ eventId }: { eventId: string }) {
   )
 }
 
+// ---------------------------------------------------------------------------
+// Details tab — the admin-side counterpart of the organizer's own edit-event
+// form (myscope-web/src/app/organizer/events/[id]/edit). Same field set,
+// same PATCH endpoint (superadmin passes the ownership check on
+// /organizer/events/:id), so behavior matches exactly: draft/pending/rejected
+// events save immediately, approved (live) events queue the change into
+// event_pending_edits for review instead of applying it right away.
+// ---------------------------------------------------------------------------
+
+const isoToLocalInput = (iso: string | null | undefined) => {
+  if (!iso) return ""
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ""
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+const localInputToIso = (v: string) => {
+  if (!v) return null
+  const d = new Date(v)
+  return Number.isNaN(d.getTime()) ? null : d.toISOString()
+}
+
+function DetailsTab({
+  eventId,
+  event,
+  pendingEdit,
+  onSaved,
+}: {
+  eventId: string
+  event: any
+  pendingEdit: any
+  onSaved: () => void
+}) {
+  const [form, setForm] = useState({
+    title: "", description: "", category: "", venue_name: "", venue_address: "",
+    venue_location_url: "", start_time: "", end_time: "", capacity: "",
+    banner_url: "", layout_image_url: "", trailer_url: "", sms_reminders: true,
+  })
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState("")
+
+  useEffect(() => {
+    if (!event) return
+    setForm({
+      title: event.title ?? "",
+      description: event.description ?? "",
+      category: event.category ?? "",
+      venue_name: event.venue_name ?? "",
+      venue_address: event.venue_address ?? "",
+      venue_location_url: event.venue_location_url ?? "",
+      start_time: isoToLocalInput(event.start_time),
+      end_time: isoToLocalInput(event.end_time),
+      capacity: event.capacity != null ? String(event.capacity) : "",
+      banner_url: event.banner_url ?? "",
+      layout_image_url: event.layout_image_url ?? "",
+      trailer_url: event.trailer_url ?? "",
+      sms_reminders: event.sms_reminders ?? true,
+    })
+  }, [event])
+
+  if (!event) return <CardSkeleton />
+
+  const canEdit = ["draft", "pending", "approved", "rejected"].includes(event.approval_status)
+  const inp = "w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+  const label = "mb-1.5 block text-sm font-medium"
+
+  const save = async () => {
+    setErr("")
+    if (!form.title.trim()) { setErr("Title is required."); return }
+    if (!form.start_time) { setErr("Start time is required."); return }
+    setSaving(true)
+    try {
+      const res = await adminEventManage.update(eventId, {
+        title: form.title.trim(),
+        description: form.description.trim() || null,
+        category: form.category.trim() || null,
+        venue_name: form.venue_name.trim() || null,
+        venue_address: form.venue_address.trim() || null,
+        venue_location_url: form.venue_location_url.trim() || null,
+        start_time: localInputToIso(form.start_time),
+        end_time: localInputToIso(form.end_time),
+        capacity: form.capacity ? parseInt(form.capacity, 10) : null,
+        banner_url: form.banner_url.trim() || null,
+        layout_image_url: form.layout_image_url.trim() || null,
+        trailer_url: form.trailer_url.trim() || null,
+        sms_reminders: form.sms_reminders,
+      })
+      if (res.data?.queued) {
+        toast.success(res.data?.message || "Submitted for review. The live event stays unchanged until approved.")
+      } else {
+        toast.success("Saved.")
+      }
+      onSaved()
+    } catch (e: any) {
+      setErr(e?.response?.data?.message || "Failed to save.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {!canEdit && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>This event is <strong>{event.approval_status}</strong> and cannot be edited.</span>
+        </div>
+      )}
+      {err && <ErrorBanner message={err} />}
+
+      <Card>
+        <fieldset disabled={!canEdit || saving} className="space-y-4">
+          <div>
+            <label className={label} htmlFor="d-title">Title <span className="text-destructive">*</span></label>
+            <input id="d-title" className={inp} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className={label} htmlFor="d-category">Category</label>
+              <select id="d-category" className={inp} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+                <option value="">Pick one…</option>
+                <option value="Concerts">Concerts</option>
+                <option value="Theatre">Theatre</option>
+                <option value="Sports">Sports</option>
+                <option value="Events">Events</option>
+              </select>
+            </div>
+            <div>
+              <label className={label} htmlFor="d-capacity">Capacity</label>
+              <input id="d-capacity" type="number" min={1} className={inp} value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} />
+            </div>
+          </div>
+
+          <div>
+            <label className={label} htmlFor="d-description">Description</label>
+            <textarea id="d-description" rows={5} className={inp} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className={label} htmlFor="d-start">Start time <span className="text-destructive">*</span></label>
+              <input id="d-start" type="datetime-local" className={inp} value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} />
+            </div>
+            <div>
+              <label className={label} htmlFor="d-end">End time</label>
+              <input id="d-end" type="datetime-local" className={inp} value={form.end_time} onChange={(e) => setForm({ ...form, end_time: e.target.value })} />
+            </div>
+          </div>
+
+          <div>
+            <label className={label} htmlFor="d-venue-name">Venue name</label>
+            <input id="d-venue-name" className={inp} value={form.venue_name} onChange={(e) => setForm({ ...form, venue_name: e.target.value })} />
+          </div>
+
+          <div>
+            <label className={label} htmlFor="d-venue-address">Venue address</label>
+            <input id="d-venue-address" className={inp} value={form.venue_address} onChange={(e) => setForm({ ...form, venue_address: e.target.value })} />
+          </div>
+
+          <div>
+            <label className={label} htmlFor="d-venue-url">Location URL</label>
+            <input id="d-venue-url" type="url" placeholder="https://maps.google.com/..." className={inp} value={form.venue_location_url} onChange={(e) => setForm({ ...form, venue_location_url: e.target.value })} />
+          </div>
+
+          <ImageUploadField label="Banner image" value={form.banner_url} onChange={(url) => setForm({ ...form, banner_url: url })} disabled={!canEdit || saving} />
+          <ImageUploadField
+            label="Seating / zone layout (optional)"
+            hint="A venue map showing zones or the seat plan. Shown to attendees on the ticket-selection page."
+            value={form.layout_image_url}
+            onChange={(url) => setForm({ ...form, layout_image_url: url })}
+            disabled={!canEdit || saving}
+          />
+
+          <div>
+            <label className={label} htmlFor="d-trailer">YouTube trailer (optional)</label>
+            <input id="d-trailer" type="url" placeholder="https://www.youtube.com/watch?v=…" className={inp} value={form.trailer_url} onChange={(e) => setForm({ ...form, trailer_url: e.target.value })} />
+          </div>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={form.sms_reminders} onChange={(e) => setForm({ ...form, sms_reminders: e.target.checked })} className="h-4 w-4 rounded border-border" />
+            SMS reminders — text attendees before this event
+          </label>
+        </fieldset>
+      </Card>
+
+      <div className="flex flex-col items-end gap-2">
+        <button
+          type="button"
+          onClick={save}
+          disabled={!canEdit || saving || !!pendingEdit}
+          className="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50"
+        >
+          {saving ? <Loader className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+          {saving ? "Saving…" : "Save changes"}
+        </button>
+        {pendingEdit && (
+          <p className="text-xs text-muted-foreground">
+            A previous edit is still awaiting review. Resolve it in Pending edits before submitting another.
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ImageUploadField({
+  label, hint, value, onChange, disabled,
+}: {
+  label: string
+  hint?: string
+  value: string
+  onChange: (url: string) => void
+  disabled: boolean
+}) {
+  const [uploading, setUploading] = useState(false)
+  const [uploadErr, setUploadErr] = useState("")
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith("image/")) { setUploadErr("Please select an image file (PNG, JPG, WebP…)."); return }
+    if (file.size > 5 * 1024 * 1024) { setUploadErr("Image must be under 5 MB."); return }
+    setUploadErr("")
+    setUploading(true)
+    try {
+      const res = await adminEventManage.uploadBanner(file)
+      if (!res.data?.success || !res.data.data?.url) throw new Error("Upload failed.")
+      onChange(res.data.data.url)
+    } catch (err: any) {
+      setUploadErr(err?.response?.data?.message || err?.message || "Upload failed.")
+    } finally {
+      setUploading(false)
+      if (fileRef.current) fileRef.current.value = ""
+    }
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <span className="flex items-center gap-1.5 text-sm font-medium">
+        <ImageIcon className="h-4 w-4 text-primary" /> {label}
+      </span>
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+
+      <label className={`flex w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-5 text-center transition-colors ${disabled ? "cursor-not-allowed opacity-50" : "border-border hover:border-primary/40 hover:bg-muted/40"}`}>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          title={`Upload ${label.toLowerCase()}`}
+          aria-label={`Upload ${label.toLowerCase()}`}
+          className="hidden"
+          onChange={handleFile}
+          disabled={disabled || uploading}
+        />
+        {uploading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader className="h-4 w-4 animate-spin" /> Uploading…</div>
+        ) : (
+          <span className="text-sm font-semibold text-primary">Click to upload image</span>
+        )}
+        <span className="text-xs text-muted-foreground">PNG, JPG, WebP · max 5 MB</span>
+      </label>
+
+      {uploadErr && <p className="text-xs text-destructive">{uploadErr}</p>}
+
+      {value && (
+        <div className="space-y-1.5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={value} alt={`${label} preview`} className="w-full rounded-lg border border-border bg-muted object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = "none" }} />
+          {!disabled && (
+            <button type="button" onClick={() => onChange("")} className="text-xs font-medium text-destructive hover:underline">
+              Remove image
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function TicketsTab({ eventId, tickets, reload }: { eventId: string; tickets: any[]; reload: () => void }) {
   const [editing, setEditing] = useState<string | null>(null)
   const [draft, setDraft] = useState<any>({ name: "", price: "", quantity_total: "", per_order_limit: "10", is_active: true })
@@ -499,15 +812,24 @@ function TicketsTab({ eventId, tickets, reload }: { eventId: string; tickets: an
     const body = { name: draft.name.trim(), price: Number(draft.price), quantity_total: parseInt(draft.quantity_total, 10), per_order_limit: parseInt(draft.per_order_limit, 10), is_active: draft.is_active, description: draft.description || null }
     setBusy(true)
     try {
-      if (editing === "new") await adminEventManage.createTicketType(eventId, body)
-      else await adminEventManage.updateTicketType(eventId, editing!, body)
-      toast.success("Saved.")
+      // A live (approved) event queues ticket-tier changes into event_pending_edits
+      // instead of applying them — same rule as the core-details PATCH. Without
+      // checking `queued` here the tier would look "saved" while actually
+      // untouched until an admin approves it via Pending edits.
+      const res = editing === "new"
+        ? await adminEventManage.createTicketType(eventId, body)
+        : await adminEventManage.updateTicketType(eventId, editing!, body)
+      toast.success(res.data?.queued ? (res.data?.message || "Submitted for review.") : "Saved.")
       setEditing(null); reload()
     } catch (e: any) { toast.error(e?.response?.data?.message || "Failed.") } finally { setBusy(false) }
   }
   const del = async (t: any) => {
     if (!confirm(`Delete ticket type "${t.name}"?`)) return
-    try { await adminEventManage.deleteTicketType(eventId, t.id); toast.success("Deleted."); reload() }
+    try {
+      const res = await adminEventManage.deleteTicketType(eventId, t.id)
+      toast.success(res.data?.queued ? (res.data?.message || "Submitted for review.") : "Deleted.")
+      reload()
+    }
     catch (e: any) { toast.error(e?.response?.data?.message || "Failed.") }
   }
 
