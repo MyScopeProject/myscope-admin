@@ -289,14 +289,20 @@ export default function AdminCreateEventForOrganizerPage() {
             </Field>
 
             <Field label="Category">
-              <input
-                type="text"
+              {/* Dropdown mirrors the organizer create-event flow's category
+                  options so admin-created events use the same canonical set. */}
+              <select
+                aria-label="Event category"
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                maxLength={100}
                 className={inputClass}
-                placeholder="Concerts · Theatre · Sports · …"
-              />
+              >
+                <option value="">Pick one…</option>
+                <option value="Concerts">Concerts</option>
+                <option value="Theatre">Theatre</option>
+                <option value="Sports">Sports</option>
+                <option value="Events">Events</option>
+              </select>
             </Field>
 
             <Field label="Description">
