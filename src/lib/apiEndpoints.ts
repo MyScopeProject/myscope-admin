@@ -111,6 +111,17 @@ export const adminAPI = {
       per_order_limit?: number
     }>
   }) => api.post('/admin/events', payload),
+  // Banner image for the "create event for organizer" Media step. Same bucket
+  // and limits as the organizer's own upload-banner endpoint.
+  uploadEventBanner: (file: File) => {
+    const fd = new FormData()
+    fd.append('image', file)
+    return api.post<{ success: boolean; data: { url: string } }>(
+      '/admin/events/upload-banner',
+      fd,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    )
+  },
 
   // Hero slides — admin-uploaded banners OR references to existing events.
   // Each row carries exactly one of image_url / event_id. Public read at

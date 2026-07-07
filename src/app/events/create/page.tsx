@@ -18,11 +18,11 @@
 // Contract deviations from the organizer flow (dictated by POST /admin/events):
 //   • No seat-map builder for reserved/zoned — the mode is set here, but the
 //     seat map / layout is completed by the organizer from their dashboard.
-//   • Media is a banner URL (not the organizer's drag-drop uploader).
-//   • No SMS-reminder / free-seating-tier / trailer / layout-image fields —
-//     those aren't part of the admin create payload.
+//   • Media step only has a banner (no layout image / trailer fields).
+//   • No SMS-reminder / free-seating-tier fields — those aren't part of the
+//     admin create payload.
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute"
 import { AdminLayout } from "@/components/layout/AdminLayout"
@@ -641,37 +641,12 @@ export default function AdminCreateEventForOrganizerPage() {
                 <StepHeader
                   icon={ImageIcon}
                   title="Media"
-                  subtitle="Add a banner image URL. The organizer can swap it from their dashboard later."
+                  subtitle="Upload a banner image. The organizer can swap it from their dashboard later."
                 />
                 <div className="space-y-1.5">
-                  <FieldLabel htmlFor="banner_url">Banner image URL</FieldLabel>
-                  <Input
-                    id="banner_url"
-                    type="url"
-                    maxLength={2048}
-                    value={bannerUrl}
-                    onChange={(e) => setBannerUrl(e.target.value)}
-                    placeholder="https://…/banner.jpg"
-                  />
+                  <FieldLabel>Banner image</FieldLabel>
+                  <ImageDropzone value={bannerUrl} onChange={setBannerUrl} previewAlt="Banner preview" />
                 </div>
-                {bannerUrl && (
-                  <div className="space-y-2">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={bannerUrl}
-                      alt="Banner preview"
-                      className="w-full rounded-xl border border-border bg-muted object-contain"
-                      onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setBannerUrl("")}
-                      className="text-xs font-medium text-destructive hover:underline"
-                    >
-                      Remove image
-                    </button>
-                  </div>
-                )}
               </div>
             )}
 
@@ -873,6 +848,107 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="flex items-baseline gap-3 text-sm">
       <span className="w-28 shrink-0 text-muted-foreground">{label}</span>
       <span className="min-w-0 truncate text-foreground">{value}</span>
+    </div>
+  )
+}
+
+// Drag/click-to-upload image tile — posts to POST /admin/events/upload-banner
+// and hands back the public Supabase Storage URL. Mirrors the organizer
+// wizard's ImageDropzone (myscope-web/src/app/organizer/events/create).
+function ImageDropzone({
+  value,
+  onChange,
+  previewAlt,
+}: {
+  value: string
+  onChange: (url: string) => void
+  previewAlt: string
+}) {
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState("")
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith("image/")) {
+      setUploadError("Please select an image file (PNG, JPG, WebP…).")
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setUploadError("Image must be under 5 MB.")
+      return
+    }
+    setUploadError("")
+    setUploading(true)
+    try {
+      const res = await adminAPI.uploadEventBanner(file)
+      const data = res.data as { success: boolean; data?: { url: string }; message?: string }
+      if (!data?.success || !data.data?.url) throw new Error(data?.message || "Upload failed.")
+      onChange(data.data.url)
+    } catch (err) {
+      const e = err as { response?: { data?: { message?: string } }; message?: string }
+      setUploadError(e.response?.data?.message || e.message || "Upload failed.")
+    } finally {
+      setUploading(false)
+      if (fileRef.current) fileRef.current.value = ""
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <label
+        className={cn(
+          "flex w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-8 text-center transition-colors",
+          uploading
+            ? "border-primary/60"
+            : "border-border hover:border-primary/40 hover:bg-muted/40",
+        )}
+      >
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          title="Upload image"
+          aria-label="Upload image"
+          className="hidden"
+          onChange={handleFileChange}
+          disabled={uploading}
+        />
+        {uploading ? (
+          <>
+            <Loader className="h-7 w-7 animate-spin text-primary" />
+            <span className="text-sm text-muted-foreground">Uploading…</span>
+          </>
+        ) : (
+          <>
+            <ImageIcon className="h-10 w-10 text-primary/40" />
+            <span className="text-sm font-semibold text-primary">Click to upload image</span>
+            <span className="text-xs text-muted-foreground">PNG, JPG, WebP · max 5 MB</span>
+          </>
+        )}
+      </label>
+
+      {uploadError && <p className="text-sm text-destructive">{uploadError}</p>}
+
+      {value && (
+        <div className="space-y-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={value}
+            alt={previewAlt}
+            className="w-full rounded-xl border border-border bg-muted object-contain"
+            onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+          />
+          <button
+            type="button"
+            onClick={() => onChange("")}
+            className="text-xs font-medium text-destructive hover:underline"
+          >
+            Remove image
+          </button>
+        </div>
+      )}
     </div>
   )
 }
