@@ -27,6 +27,7 @@ import {
   LayoutGrid,
   History,
   Handshake,
+  Package,
   ShoppingBag,
 } from "lucide-react"
 import { ThemeToggle } from "../ui/theme-toggle"
@@ -48,6 +49,7 @@ const allNavItems: NavItem[] = [
   { name: "Hero Carousel", href: "/hero-carousel", icon: Star },
   { name: "Past Events", href: "/past-events", icon: History },
   { name: "Partners", href: "/partners", icon: Handshake },
+  { name: "Shop Products", href: "/shop-products", icon: Package },
   { name: "Shop Orders", href: "/shop-orders", icon: ShoppingBag },
   { name: "Payouts", href: "/payouts", icon: Banknote },
   { name: "Earnings", href: "/earnings", icon: Coins },
@@ -181,7 +183,8 @@ export function AdminLayout({ children, user }: AdminLayoutProps) {
               item.href === '/events/review' ? pending.eventReview :
               item.href === '/payouts' ? pending.payouts :
               item.href === '/events/pending-edits' ? pending.editReview :
-              item.href === '/reserved-seating-events' ? pending.reservedLayouts : 0
+              item.href === '/reserved-seating-events' ? pending.reservedLayouts :
+              item.href === '/shop-products' ? pending.shopProducts : 0
 
             const badgeLabel = badge > 99 ? '99+' : String(badge)
             // Tooltip surfaces the remaining-work count too — not just the

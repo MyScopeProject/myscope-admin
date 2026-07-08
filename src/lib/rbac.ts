@@ -113,6 +113,9 @@ export const ROUTE_ACCESS: Record<string, UserRole[]> = {
   // Force-cancel still requires explicit confirmation in the UI.
   '/shop-orders': ['superadmin', 'event-manager', 'support'],
 
+  // Shop products review — same reviewers as event content moderation.
+  '/shop-products': ['superadmin', 'event-manager', 'content-manager'],
+
   // Venue seat-map templates — superadmin curates the shared library
   '/venues': ['superadmin'],
 

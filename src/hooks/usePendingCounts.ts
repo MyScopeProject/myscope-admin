@@ -7,10 +7,11 @@ export interface PendingCounts {
   payouts: number         // requested (unpaid) payouts
   editReview: number      // organizer edits to LIVE events awaiting approve/decline
   reservedLayouts: number // reserved events awaiting an admin-built seat map
+  shopProducts: number    // shop products awaiting review/approval
 }
 
 const EMPTY: PendingCounts = {
-  organizers: 0, eventReview: 0, payouts: 0, editReview: 0, reservedLayouts: 0,
+  organizers: 0, eventReview: 0, payouts: 0, editReview: 0, reservedLayouts: 0, shopProducts: 0,
 }
 const POLL_INTERVAL = 30_000
 
@@ -20,12 +21,13 @@ export function usePendingCounts(enabled = true) {
   const refresh = useCallback(async () => {
     if (!enabled) return
     try {
-      const [orgRes, evRes, payRes, editRes, layoutRes] = await Promise.allSettled([
+      const [orgRes, evRes, payRes, editRes, layoutRes, shopRes] = await Promise.allSettled([
         api.get('/admin/organizers', { params: { status: 'pending' } }),
         api.get('/admin/events', { params: { approvalStatus: 'pending', limit: 1 } }),
         api.get('/admin/payouts', { params: { status: 'requested' } }),
         api.get('/admin/events/pending-edits'),
         api.get('/admin/events/layout-requests'),
+        api.get('/admin/shop-products/summary'),
       ])
 
       // GET /admin/organizers → { data: { profiles: [...] } }
@@ -58,7 +60,13 @@ export function usePendingCounts(enabled = true) {
           ? (layoutRes.value?.data?.data?.requests?.length ?? 0)
           : 0
 
-      setCounts({ organizers, eventReview, payouts, editReview, reservedLayouts })
+      // GET /admin/shop-products/summary → { data: { pending_review: N } }
+      const shopProducts =
+        shopRes.status === 'fulfilled'
+          ? (shopRes.value?.data?.data?.pending_review ?? 0)
+          : 0
+
+      setCounts({ organizers, eventReview, payouts, editReview, reservedLayouts, shopProducts })
     } catch {
       // badge counts are non-critical — silently ignore
     }

@@ -334,6 +334,23 @@ export const adminAPI = {
 
   forceCancelShopOrder: (id: string, reason: string) =>
     api.post(`/admin/shop/orders/${id}/force-cancel`, { reason }),
+
+  // Shop products — the review/approval gate. Organizers submit products for
+  // review; admins approve (→ published) or reject (→ rejected, with reason).
+  getShopProducts: (params?: {
+    status?: 'draft' | 'pending_review' | 'published' | 'sold_out' | 'rejected' | 'archived'
+    limit?: number
+    offset?: number
+  }) => api.get('/admin/shop-products', { params }),
+
+  getShopProductsSummary: () => api.get('/admin/shop-products/summary'),
+
+  getShopProductById: (id: string) => api.get(`/admin/shop-products/${id}`),
+
+  approveShopProduct: (id: string) => api.post(`/admin/shop-products/${id}/approve`),
+
+  rejectShopProduct: (id: string, reason: string) =>
+    api.post(`/admin/shop-products/${id}/reject`, { reason }),
 };
 
 // Admin event management — superadmin override that reuses the organizer
