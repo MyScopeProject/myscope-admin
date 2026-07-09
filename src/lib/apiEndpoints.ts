@@ -283,6 +283,10 @@ export const adminAPI = {
         ...(opts?.force ? { force: true } : {}),
       },
     }),
+  // Wipes stored bank/payout details. Admin-only — organizers can't self-
+  // serve this. Reason required (>=10 chars) for the audit log.
+  clearOrganizerBank: (id: string, reason: string) =>
+    api.post(`/admin/organizers/${id}/clear-bank`, { reason }),
 
   // Refunds (Step 12)
   refundBooking: (booking_id: string, reason: string) =>
@@ -351,6 +355,16 @@ export const adminAPI = {
 
   rejectShopProduct: (id: string, reason: string) =>
     api.post(`/admin/shop-products/${id}/reject`, { reason }),
+
+  // Housekeeping — same archive/restore/permanent-delete controls the
+  // organizer has on their own products, usable here on ANY organizer's
+  // listing (e.g. cleaning up after the organizer goes inactive).
+  archiveShopProduct: (id: string) => api.post(`/admin/shop-products/${id}/archive`),
+
+  restoreShopProduct: (id: string) => api.post(`/admin/shop-products/${id}/restore`),
+
+  deleteShopProductPermanently: (id: string) =>
+    api.delete(`/admin/shop-products/${id}/permanent`),
 };
 
 // Admin event management — superadmin override that reuses the organizer

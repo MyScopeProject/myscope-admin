@@ -86,6 +86,7 @@ export default function OrganizersPage() {
   const [rejectingFor, setRejectingFor] = useState<OrganizerProfile | null>(null)
   const [revokingFor, setRevokingFor] = useState<OrganizerProfile | null>(null)
   const [deletingFor, setDeletingFor] = useState<OrganizerProfile | null>(null)
+  const [clearingBankFor, setClearingBankFor] = useState<OrganizerProfile | null>(null)
   // Revoke-only state — the blockers list comes from a preflight call when the
   // modal opens so the admin can see what's in flight before deciding to force.
   const [revokeBlockers, setRevokeBlockers] = useState<Blocker[] | null>(null)
@@ -136,6 +137,31 @@ export default function OrganizersPage() {
       setRejectingFor(null)
     } catch (err: any) {
       toast.error(err?.response?.data?.message || "Failed to reject")
+    } finally {
+      setPendingActionId(null)
+    }
+  }
+
+  const submitClearBank = async (reason: string) => {
+    if (!clearingBankFor) return
+    setPendingActionId(clearingBankFor.id)
+    try {
+      await adminAPI.clearOrganizerBank(clearingBankFor.id, reason)
+      toast.success("Bank details cleared")
+      setProfiles((prev) =>
+        prev.map((p) =>
+          p.id === clearingBankFor.id
+            ? {
+                ...p,
+                bank_name: null, bank_account_number: null, bank_account_name: null,
+                branch_name: null, bank_code: null, branch_code: null,
+              }
+            : p,
+        ),
+      )
+      setClearingBankFor(null)
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || "Failed to clear bank details")
     } finally {
       setPendingActionId(null)
     }
@@ -300,6 +326,7 @@ export default function OrganizersPage() {
                   onReject={() => setRejectingFor(p)}
                   onRevoke={() => handleOpenRevoke(p)}
                   onDelete={() => setDeletingFor(p)}
+                  onClearBank={() => setClearingBankFor(p)}
                 />
               ))}
             </div>
@@ -337,6 +364,15 @@ export default function OrganizersPage() {
             onSubmit={submitDeletion}
           />
         )}
+
+        {clearingBankFor && (
+          <ClearBankModal
+            profile={clearingBankFor}
+            busy={pendingActionId === clearingBankFor.id}
+            onClose={() => setClearingBankFor(null)}
+            onSubmit={submitClearBank}
+          />
+        )}
       </AdminLayout>
     </ProtectedRoute>
   )
@@ -351,6 +387,7 @@ function ProfileCard({
   onReject,
   onRevoke,
   onDelete,
+  onClearBank,
 }: {
   profile: OrganizerProfile
   busy: boolean
@@ -360,8 +397,13 @@ function ProfileCard({
   onReject: () => void
   onRevoke: () => void
   onDelete: () => void
+  onClearBank: () => void
 }) {
   const u = profile.users
+  const hasBankDetails = !!(
+    profile.bank_name || profile.bank_account_number || profile.bank_account_name ||
+    profile.branch_name || profile.bank_code || profile.branch_code
+  )
   return (
     <div className="bg-card border border-border rounded-lg p-5 flex flex-col">
       {/* Header row */}
@@ -489,8 +531,21 @@ function ProfileCard({
 
       {/* Delete — always available regardless of tab. Revoke is the
           softer flow (keeps profile row, drops role); this is the
-          irreversible cleanup affordance. */}
-      <div className={`flex items-center justify-end mt-2 ${showActions || showRevoke ? "" : "pt-4 border-t border-border"}`}>
+          irreversible cleanup affordance. Clear bank details sits alongside
+          it — a lighter, admin-only housekeeping action (organizers can't
+          self-serve clearing their own bank info, only editing it). */}
+      <div className={`flex items-center justify-between mt-2 ${showActions || showRevoke ? "" : "pt-4 border-t border-border"}`}>
+        {hasBankDetails ? (
+          <button
+            type="button"
+            onClick={onClearBank}
+            disabled={busy}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition disabled:opacity-50"
+          >
+            {busy ? <Loader className="h-3.5 w-3.5 animate-spin" /> : <Landmark className="h-3.5 w-3.5" />}
+            Clear bank details
+          </button>
+        ) : <span />}
         <button
           type="button"
           onClick={onDelete}
@@ -602,6 +657,68 @@ function RejectModal({
             className="flex-1 px-4 py-2 bg-destructive text-destructive-foreground rounded-md hover:opacity-90 transition disabled:opacity-50"
           >
             {busy ? "Rejecting…" : "Reject"}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Confirms + collects a reason before wiping an organizer's bank details.
+// Reason mirrors the API's own validation (min 10 chars) so the button isn't
+// enabled until a submission would actually succeed.
+function ClearBankModal({
+  profile,
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  profile: OrganizerProfile
+  busy: boolean
+  onClose: () => void
+  onSubmit: (reason: string) => void
+}) {
+  const [reason, setReason] = useState("")
+  const trimmed = reason.trim()
+  const valid = trimmed.length >= 10
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div className="bg-card border border-border rounded-lg max-w-md w-full p-6">
+        <h2 className="text-xl font-bold text-foreground mb-1">Clear bank details?</h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Removes {profile.business_name}&rsquo;s stored bank name, account number/name, and branch
+          info for good. They can re-enter it themselves from their profile at any time.
+        </p>
+
+        <label className="block text-sm font-medium text-foreground mb-2">Reason (min. 10 characters)</label>
+        <textarea
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          rows={3}
+          className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+          placeholder="e.g. Organizer resigned and requested their bank details be removed."
+          maxLength={500}
+          autoFocus
+        />
+        <div className="text-xs text-muted-foreground mt-1">{trimmed.length} / 500</div>
+
+        <div className="flex gap-3 pt-4">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="flex-1 px-4 py-2 bg-muted text-foreground rounded-lg hover:opacity-90 transition disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={busy || !valid}
+            onClick={() => onSubmit(trimmed)}
+            className="flex-1 px-4 py-2 bg-destructive text-destructive-foreground rounded-md hover:opacity-90 transition disabled:opacity-50"
+          >
+            {busy ? "Clearing…" : "Clear bank details"}
           </button>
         </div>
       </div>

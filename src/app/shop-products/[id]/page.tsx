@@ -15,8 +15,8 @@ import { PageLoader } from "@/components/ui/loading"
 import { adminAPI } from "@/lib/apiEndpoints"
 import toast from "react-hot-toast"
 import {
-  AlertCircle, ArrowLeft, CheckCircle, Clock, ExternalLink, ImageIcon,
-  Loader2, Mail, MapPin, Package, Tag, Truck, User, XCircle,
+  AlertCircle, AlertTriangle, ArrowLeft, Archive, CheckCircle, Clock, ExternalLink, ImageIcon,
+  Loader2, Mail, MapPin, Package, RotateCcw, Tag, Trash2, Truck, User, XCircle,
 } from "lucide-react"
 
 type ProductStatus = "draft" | "pending_review" | "published" | "sold_out" | "rejected" | "archived"
@@ -81,6 +81,8 @@ export default function AdminShopProductDetailPage() {
   const [acting, setActing] = useState(false)
   const [showReject, setShowReject] = useState(false)
   const [rejectReason, setRejectReason] = useState("")
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const load = useCallback(async () => {
     if (!id) return
@@ -126,6 +128,49 @@ export default function AdminShopProductDetailPage() {
       toast.error(err?.response?.data?.message || "Failed to reject product")
     } finally {
       setActing(false)
+    }
+  }
+
+  const archive = async () => {
+    if (!product) return
+    setActing(true)
+    try {
+      await adminAPI.archiveShopProduct(product.id)
+      toast.success("Product archived — hidden from the public shop.")
+      load()
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || "Failed to archive product")
+    } finally {
+      setActing(false)
+    }
+  }
+
+  const restore = async () => {
+    if (!product) return
+    setActing(true)
+    try {
+      await adminAPI.restoreShopProduct(product.id)
+      toast.success("Product restored to draft.")
+      load()
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || "Failed to restore product")
+    } finally {
+      setActing(false)
+    }
+  }
+
+  const deletePermanently = async () => {
+    if (!product) return
+    setDeleting(true)
+    try {
+      await adminAPI.deleteShopProductPermanently(product.id)
+      toast.success("Product permanently deleted.")
+      router.push("/shop-products")
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || "Failed to delete product")
+      setShowDeleteModal(false)
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -298,6 +343,49 @@ export default function AdminShopProductDetailPage() {
                 )}
               </div>
 
+              {/* Housekeeping — same archive/restore/delete controls the
+                  organizer has on their own listing, usable here on any
+                  organizer's product. */}
+              <div className="rounded-2xl border border-border bg-card p-5 space-y-3">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Manage listing</h3>
+                {product.status !== "archived" ? (
+                  <button
+                    type="button"
+                    onClick={archive}
+                    disabled={acting}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-medium transition hover:bg-muted disabled:opacity-60"
+                  >
+                    {acting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}
+                    Archive
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={restore}
+                      disabled={acting}
+                      className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-medium transition hover:bg-muted disabled:opacity-60"
+                    >
+                      {acting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                      Restore to draft
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowDeleteModal(true)}
+                      disabled={acting || deleting}
+                      className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-sm font-semibold text-destructive transition hover:bg-destructive/20 disabled:opacity-60"
+                    >
+                      <Trash2 className="h-4 w-4" /> Delete permanently
+                    </button>
+                  </>
+                )}
+                <p className="text-[11px] text-center text-muted-foreground">
+                  {product.status !== "archived"
+                    ? "Hides it from the public shop. Reversible."
+                    : "Permanent delete is blocked if this product has any order history."}
+                </p>
+              </div>
+
               {isPending && (
                 <div className="rounded-2xl border border-border bg-card p-5 space-y-3">
                   <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Review decision</h3>
@@ -372,6 +460,49 @@ export default function AdminShopProductDetailPage() {
                 >
                   {acting ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
                   Confirm rejection
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete-permanently confirm modal */}
+        {showDeleteModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            onClick={() => { if (!deleting) setShowDeleteModal(false) }}
+          >
+            <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start gap-3">
+                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+                  <AlertTriangle className="h-5 w-5" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-lg font-semibold">Delete permanently?</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    <span className="font-semibold text-foreground">&ldquo;{product.title}&rdquo;</span> will be
+                    removed for good — this can&apos;t be undone. Blocked automatically if it has order history.
+                    The organizer will be notified.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteModal(false)}
+                  disabled={deleting}
+                  className="rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={deletePermanently}
+                  disabled={deleting}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-destructive px-4 py-2 text-sm text-destructive-foreground transition hover:opacity-90 disabled:opacity-50"
+                >
+                  {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  Delete permanently
                 </button>
               </div>
             </div>
