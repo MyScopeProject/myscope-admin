@@ -28,6 +28,8 @@ interface Payout {
   notes: string | null
   event_id: string | null
   event?: { id: string; title: string } | null
+  product_id: string | null
+  product?: { id: string; title: string } | null
   organizer_id: string
   // The underlying user row (kept for fallback / email lookup if no profile).
   organizer?: { id: string; name: string; email: string } | null
@@ -83,11 +85,11 @@ const STATUS_BADGE: Record<Status, { label: string; cls: string; icon: React.Rea
   rejected: { label: "Rejected", cls: "bg-destructive/15 text-destructive", icon: <XCircle className="w-3.5 h-3.5" /> },
 }
 
-// Payouts come from two sources now:
-//   - event_id IS NOT NULL → event payout (per-event revenue)
-//   - event_id IS NULL     → shop payout (storefront-wide revenue)
-// The earlier "All events" wording for the null case was misleading once
-// shop payouts existed, so we surface the source explicitly.
+// Payouts come from three sources now:
+//   - event_id IS NOT NULL   → event payout (per-event revenue)
+//   - product_id IS NOT NULL → product payout (per-product shop revenue)
+//   - both NULL              → legacy combined-shop payout (pre-migration
+//                              rows from before per-product tracking existed)
 function PayoutSourcePill({ payout }: { payout: Payout }) {
   if (payout.event_id && payout.event?.title) {
     return (
@@ -97,19 +99,37 @@ function PayoutSourcePill({ payout }: { payout: Payout }) {
       </span>
     )
   }
-  if (!payout.event_id) {
+  if (payout.product_id && payout.product?.title) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
-        <ShoppingBag className="h-3 w-3" />
-        Shop revenue
+      <span className="inline-flex max-w-56 items-center gap-1 truncate rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+        <ShoppingBag className="h-3 w-3 shrink-0" />
+        <span className="truncate">{payout.product.title}</span>
       </span>
     )
   }
-  // event_id present but no joined title — likely a deleted event. Show id stub.
+  if (payout.event_id) {
+    // event_id present but no joined title — likely a deleted event.
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+        <Calendar className="h-3 w-3" />
+        Event {payout.event_id.slice(0, 6)}
+      </span>
+    )
+  }
+  if (payout.product_id) {
+    // product_id present but no joined title — likely a deleted product.
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+        <ShoppingBag className="h-3 w-3" />
+        Product {payout.product_id.slice(0, 6)}
+      </span>
+    )
+  }
+  // Neither set — legacy combined-shop payout, predates per-product tracking.
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-      <Calendar className="h-3 w-3" />
-      Event {payout.event_id.slice(0, 6)}
+      <ShoppingBag className="h-3 w-3" />
+      Shop revenue (legacy)
     </span>
   )
 }
@@ -134,7 +154,9 @@ export default function PayoutsPage() {
   const [selectedOrg, setSelectedOrg] = useState("")
   const [orgBalance, setOrgBalance] = useState<BalanceInfo | null>(null)
   const [orgEvents, setOrgEvents] = useState<{ id: string; title: string }[]>([])
+  const [orgProducts, setOrgProducts] = useState<{ id: string; title: string }[]>([])
   const [createEvent, setCreateEvent] = useState("")
+  const [createProduct, setCreateProduct] = useState("")
   const [balanceLoading, setBalanceLoading] = useState(false)
   const [createAmount, setCreateAmount] = useState("")
   const [createNotes, setCreateNotes] = useState("")
@@ -247,7 +269,9 @@ export default function PayoutsPage() {
     setSelectedOrg(id)
     setOrgBalance(null)
     setOrgEvents([])
+    setOrgProducts([])
     setCreateEvent("")
+    setCreateProduct("")
     setCreateAmount("")
     if (!id) return
     setBalanceLoading(true)
@@ -256,6 +280,7 @@ export default function PayoutsPage() {
       const bal = res.data?.data?.balance as BalanceInfo
       setOrgBalance(bal)
       setOrgEvents(res.data?.data?.events ?? [])
+      setOrgProducts(res.data?.data?.products ?? [])
       setCreateAmount(bal ? String(bal.pending) : "")
     } catch {
       toast.error("Couldn't load balance.")
@@ -263,6 +288,23 @@ export default function PayoutsPage() {
       setBalanceLoading(false)
     }
   }
+
+  // Single <select> encodes the choice as "event:<id>" / "product:<id>" / ""
+  // (legacy combined-shop) — parsed here into the two mutually-exclusive
+  // id states the create payload actually needs.
+  const onSelectSource = (value: string) => {
+    if (value.startsWith("event:")) {
+      setCreateEvent(value.slice(6))
+      setCreateProduct("")
+    } else if (value.startsWith("product:")) {
+      setCreateProduct(value.slice(8))
+      setCreateEvent("")
+    } else {
+      setCreateEvent("")
+      setCreateProduct("")
+    }
+  }
+  const sourceValue = createEvent ? `event:${createEvent}` : createProduct ? `product:${createProduct}` : ""
 
   const submitCreate = async () => {
     const amount = Number(createAmount)
@@ -278,6 +320,7 @@ export default function PayoutsPage() {
         organizer_id: selectedOrg,
         amount,
         event_id: createEvent || undefined,
+        product_id: createProduct || undefined,
         notes: createNotes.trim() || undefined,
       })
       toast.success("Payout created.")
@@ -472,17 +515,29 @@ export default function PayoutsPage() {
                     <label htmlFor="evt" className="mb-1.5 block text-sm font-medium text-foreground">Source</label>
                     <select
                       id="evt"
-                      value={createEvent}
-                      onChange={(e) => setCreateEvent(e.target.value)}
+                      value={sourceValue}
+                      onChange={(e) => onSelectSource(e.target.value)}
                       className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                     >
-                      <option value="">Shop revenue (storefront-wide)</option>
-                      {orgEvents.map((ev) => (
-                        <option key={ev.id} value={ev.id}>{ev.title}</option>
-                      ))}
+                      <option value="">Shop revenue (legacy, storefront-wide)</option>
+                      {orgEvents.length > 0 && (
+                        <optgroup label="Events">
+                          {orgEvents.map((ev) => (
+                            <option key={ev.id} value={`event:${ev.id}`}>{ev.title}</option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {orgProducts.length > 0 && (
+                        <optgroup label="Products">
+                          {orgProducts.map((p) => (
+                            <option key={p.id} value={`product:${p.id}`}>{p.title}</option>
+                          ))}
+                        </optgroup>
+                      )}
                     </select>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Pick an event for per-event revenue, or leave on Shop revenue for storefront-wide payouts.
+                      Pick an event or product to draw the payout from that specific balance. The legacy
+                      shop-wide option only applies to pre-migration payouts.
                     </p>
                   </div>
                 )}
@@ -626,7 +681,9 @@ export default function PayoutsPage() {
                         value={
                           selected.event_id
                             ? (selected.event?.title || `Event ${selected.event_id.slice(0, 8)}`)
-                            : "Shop revenue (storefront-wide)"
+                            : selected.product_id
+                              ? (selected.product?.title || `Product ${selected.product_id.slice(0, 8)}`)
+                              : "Shop revenue (legacy, storefront-wide)"
                         }
                       />
                       <DetailRow label="Requested" value={new Date(selected.requested_at).toLocaleString()} />
@@ -737,7 +794,7 @@ export default function PayoutsPage() {
                     {!payTarget.event_id && (
                       <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
                         <ShoppingBag className="h-2.5 w-2.5" />
-                        Shop
+                        {payTarget.product?.title || "Shop"}
                       </span>
                     )}
                   </p>

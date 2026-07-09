@@ -297,7 +297,7 @@ export const adminAPI = {
     api.get('/admin/payouts', { params: status ? { status } : undefined }),
   getOrganizerBalance: (organizerId: string) =>
     api.get(`/admin/payouts/balance/${organizerId}`),
-  createPayout: (data: { organizer_id: string; amount: number; event_id?: string; notes?: string }) =>
+  createPayout: (data: { organizer_id: string; amount: number; event_id?: string; product_id?: string; notes?: string }) =>
     api.post('/admin/payouts', data),
   approvePayout: (id: string) =>
     api.post(`/admin/payouts/${id}/approve`),
