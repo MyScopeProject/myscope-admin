@@ -802,11 +802,11 @@ function ImageUploadField({
 
 function TicketsTab({ eventId, tickets, reload }: { eventId: string; tickets: any[]; reload: () => void }) {
   const [editing, setEditing] = useState<string | null>(null)
-  const [draft, setDraft] = useState<any>({ name: "", price: "", quantity_total: "", per_order_limit: "10", is_active: true })
+  const [draft, setDraft] = useState<any>({ name: "", price: "", quantity_total: "", per_order_limit: "10", is_active: true, description: "" })
   const [busy, setBusy] = useState(false)
 
-  const start = (t: any) => { setEditing(t.id); setDraft({ name: t.name, price: String(t.price), quantity_total: String(t.quantity_total), per_order_limit: String(t.per_order_limit), is_active: t.is_active }) }
-  const startNew = () => { setEditing("new"); setDraft({ name: "", price: "", quantity_total: "", per_order_limit: "10", is_active: true }) }
+  const start = (t: any) => { setEditing(t.id); setDraft({ name: t.name, price: String(t.price), quantity_total: String(t.quantity_total), per_order_limit: String(t.per_order_limit), is_active: t.is_active, description: t.description ?? "" }) }
+  const startNew = () => { setEditing("new"); setDraft({ name: "", price: "", quantity_total: "", per_order_limit: "10", is_active: true, description: "" }) }
 
   const save = async () => {
     const body = { name: draft.name.trim(), price: Number(draft.price), quantity_total: parseInt(draft.quantity_total, 10), per_order_limit: parseInt(draft.per_order_limit, 10), is_active: draft.is_active, description: draft.description || null }
@@ -871,6 +871,7 @@ function DraftRow({ draft, setDraft, busy, onSave, onCancel }: any) {
         <input className={inp} type="number" placeholder="Total qty" value={draft.quantity_total} onChange={(e) => setDraft({ ...draft, quantity_total: e.target.value })} />
         <input className={inp} type="number" placeholder="Per-order limit" value={draft.per_order_limit} onChange={(e) => setDraft({ ...draft, per_order_limit: e.target.value })} />
       </div>
+      <input className={inp} placeholder="Description (optional)" value={draft.description ?? ""} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
       <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
         <input type="checkbox" checked={draft.is_active} onChange={(e) => setDraft({ ...draft, is_active: e.target.checked })} /> Active
       </label>
