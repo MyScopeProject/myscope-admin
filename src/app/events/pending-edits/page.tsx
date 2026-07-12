@@ -86,12 +86,58 @@ const formatValue = (value: unknown): string => {
 const isSameValue = (a: unknown, b: unknown): boolean => {
   if (a === b) return true
   if (a == null && b == null) return true
+  // Arrays (e.g. banner_images) — compare by value/order so an unchanged
+  // gallery isn't shown as a diff.
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return JSON.stringify(a) === JSON.stringify(b)
+  }
   if (typeof a === "string" && typeof b === "string") {
     const da = Date.parse(a)
     const db = Date.parse(b)
     if (!Number.isNaN(da) && !Number.isNaN(db)) return da === db
   }
   return false
+}
+
+// Fields whose values are image URLs — rendered as thumbnails instead of raw
+// URL text so admins can visually review what's changing.
+const IMAGE_FIELDS = new Set(["banner_url", "banner_images", "layout_image_url"])
+
+// Normalise an image field's value into a URL list (banner_images is an
+// array; banner_url / layout_image_url are single strings).
+const toImageUrls = (value: unknown): string[] => {
+  if (Array.isArray(value)) return value.filter((u): u is string => typeof u === "string" && !!u)
+  if (typeof value === "string" && value) return [value]
+  return []
+}
+
+// Thumbnail strip for an image field's value. The first banner is flagged
+// "Main" since index 0 drives the live event's hero + backdrop.
+function ImageThumbs({ urls, showMain }: { urls: string[]; showMain?: boolean }) {
+  if (urls.length === 0) return <span className="text-muted-foreground">—</span>
+  return (
+    <div className="flex flex-wrap gap-2">
+      {urls.map((url, i) => (
+        <div
+          key={`${url}-${i}`}
+          className="relative h-16 w-24 overflow-hidden rounded-md border border-border bg-muted"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={url}
+            alt={showMain && i === 0 ? "Main banner" : `Image ${i + 1}`}
+            className="h-full w-full object-cover"
+            onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+          />
+          {showMain && i === 0 && urls.length > 1 && (
+            <span className="absolute left-1 top-1 rounded bg-primary px-1 py-0.5 text-[9px] font-semibold text-primary-foreground">
+              Main
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  )
 }
 
 const labelFor = (key: string): string => {
@@ -108,6 +154,7 @@ const labelFor = (key: string): string => {
     end_time: "End time",
     capacity: "Capacity",
     banner_url: "Banner image",
+    banner_images: "Banner images",
     layout_image_url: "Layout image",
     trailer_url: "Trailer URL",
     sms_reminders: "SMS reminders",
@@ -256,9 +303,15 @@ function PendingEditsContent() {
               // the snapshot loads we render all fields; once loaded we
               // render only actually-different rows.
               const hasCurrent = Object.keys(current).length > 0
-              const fields = hasCurrent
+              let fields = hasCurrent
                 ? allFields.filter(f => !isSameValue(proposed[f], current[f]))
                 : allFields
+              // banner_url is just a mirror of banner_images[0]. When the
+              // gallery changed, both show up — hide the redundant single-URL
+              // row so the admin reviews one "Banner images" thumbnail strip.
+              if (fields.includes("banner_images")) {
+                fields = fields.filter(f => f !== "banner_url")
+              }
               const kindLabel = KIND_LABEL[kind]
               // Render differently per kind so the page doesn't lie:
               //   - postpone has a small fixed payload (date / reason / flags)
@@ -419,18 +472,32 @@ function PendingEditsContent() {
                             </tr>
                           </thead>
                           <tbody>
-                            {fields.map(field => (
+                            {fields.map(field => {
+                              const isImage = IMAGE_FIELDS.has(field)
+                              return (
                               <tr key={field} className="border-t border-border align-top">
                                 <td className="py-2 pr-4 font-medium text-foreground">{labelFor(field)}</td>
-                                <td className="py-2 pr-4 text-muted-foreground">{formatValue(current[field])}</td>
+                                <td className="py-2 pr-4 text-muted-foreground">
+                                  {isImage
+                                    ? <ImageThumbs urls={toImageUrls(current[field])} showMain={field === "banner_images"} />
+                                    : formatValue(current[field])}
+                                </td>
                                 <td className="py-2 text-foreground">
-                                  <span className="inline-flex items-center gap-1.5">
-                                    <ArrowRight className="h-3 w-3 text-primary" />
-                                    {formatValue(proposed[field])}
-                                  </span>
+                                  {isImage ? (
+                                    <div className="flex items-start gap-1.5">
+                                      <ArrowRight className="mt-1 h-3 w-3 shrink-0 text-primary" />
+                                      <ImageThumbs urls={toImageUrls(proposed[field])} showMain={field === "banner_images"} />
+                                    </div>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <ArrowRight className="h-3 w-3 text-primary" />
+                                      {formatValue(proposed[field])}
+                                    </span>
+                                  )}
                                 </td>
                               </tr>
-                            ))}
+                              )
+                            })}
                           </tbody>
                         </table>
                       </div>
