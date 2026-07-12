@@ -562,7 +562,7 @@ export interface VisualSeatMapSeat {
 }
 export interface VisualSeatMapDecor {
   id?: string
-  kind: 'rect' | 'text' | 'line'
+  kind: 'rect' | 'text' | 'line' | 'circle'
   x?: number
   y?: number
   width?: number

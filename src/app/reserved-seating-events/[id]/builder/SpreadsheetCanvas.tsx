@@ -12,7 +12,9 @@ import { ZoomIn, ZoomOut } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
   type CellRange,
+  type CircleBlock,
   type GridCell,
+  type LineBlock,
   type SeatGrid,
   type SectionMeta,
   type StageBlock,
@@ -41,6 +43,13 @@ interface Props {
   onStageSelect: (id: string | null) => void
   // Move a stage (cell-unit deltas) — fires on drag end.
   onStageMove: (id: string, dx: number, dy: number) => void
+  // Decorative line/circle selection — same mutual-exclusivity as stages.
+  selectedLineId: string | null
+  onLineSelect: (id: string | null) => void
+  onLineMove: (id: string, dx: number, dy: number) => void
+  selectedCircleId: string | null
+  onCircleSelect: (id: string | null) => void
+  onCircleMove: (id: string, dx: number, dy: number) => void
   // Move the currently-selected range by (dr, dc) cells — clamped, copied
   // into the destination, source cleared. Fires once at drag end.
   onMoveSelection: (dr: number, dc: number) => void
@@ -69,6 +78,8 @@ function defaultRowLabel(i: number): string {
 export function SeatGridCanvas({
   grid, selection, onSelectionChange,
   selectedStageId, onStageSelect, onStageMove,
+  selectedLineId, onLineSelect, onLineMove,
+  selectedCircleId, onCircleSelect, onCircleMove,
   onMoveSelection,
   onRowLabelChange, onColLabelChange,
   seatColor,
@@ -247,6 +258,8 @@ export function SeatGridCanvas({
           if (e.target === e.currentTarget) {
             onSelectionChange(null)
             onStageSelect(null)
+            onLineSelect(null)
+            onCircleSelect(null)
           }
         }}
       >
@@ -358,6 +371,39 @@ export function SeatGridCanvas({
           onCommitMove={(dx, dy) => onStageMove(s.id, dx, dy)}
         />
       ))}
+
+      {/* Free-form decorative lines/circles — design only, same overlay
+          mechanics as stages above but never produce seats. */}
+      {grid.lines.map(l => (
+        <LineOverlay
+          key={l.id}
+          line={l}
+          stride={cellPx + CELL_BORDER_SPACING}
+          originX={cellOrigin.x}
+          originY={cellOrigin.y}
+          selected={selectedLineId === l.id}
+          onSelect={() => {
+            onLineSelect(l.id)
+            onSelectionChange(null)
+          }}
+          onCommitMove={(dx, dy) => onLineMove(l.id, dx, dy)}
+        />
+      ))}
+      {grid.circles.map(c => (
+        <CircleOverlay
+          key={c.id}
+          circle={c}
+          stride={cellPx + CELL_BORDER_SPACING}
+          originX={cellOrigin.x}
+          originY={cellOrigin.y}
+          selected={selectedCircleId === c.id}
+          onSelect={() => {
+            onCircleSelect(c.id)
+            onSelectionChange(null)
+          }}
+          onCommitMove={(dx, dy) => onCircleMove(c.id, dx, dy)}
+        />
+      ))}
       </div>
       </div>
     </div>
@@ -451,6 +497,139 @@ function StageOverlay({
       title={stage.label}
     >
       {stage.label || "STAGE"}
+    </div>
+  )
+}
+
+// Shared drag mechanics for the line/circle overlays below — same behavior
+// as StageOverlay's inline drag handling, factored out since it's now used
+// twice more. StageOverlay itself is left untouched to avoid touching
+// working code for an unrelated change.
+function useOverlayDrag(stride: number, onSelect: () => void, onCommitMove: (dx: number, dy: number) => void) {
+  const [dragOffset, setDragOffset] = useState<{ dx: number; dy: number } | null>(null)
+  const dragOffsetRef = useRef<{ dx: number; dy: number } | null>(null)
+  const startRef = useRef<{ x: number; y: number } | null>(null)
+  const strideRef = useRef(stride)
+  const commitRef = useRef(onCommitMove)
+  useEffect(() => { strideRef.current = stride }, [stride])
+  useEffect(() => { commitRef.current = onCommitMove }, [onCommitMove])
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    onSelect()
+    startRef.current = { x: e.clientX, y: e.clientY }
+    dragOffsetRef.current = { dx: 0, dy: 0 }
+    setDragOffset({ dx: 0, dy: 0 })
+  }, [onSelect])
+
+  useEffect(() => {
+    if (!dragOffset || !startRef.current) return
+    const onMove = (e: MouseEvent) => {
+      if (!startRef.current) return
+      const next = { dx: e.clientX - startRef.current.x, dy: e.clientY - startRef.current.y }
+      dragOffsetRef.current = next
+      setDragOffset(next)
+    }
+    const onUp = () => {
+      const final = dragOffsetRef.current
+      if (final && (Math.abs(final.dx) > 2 || Math.abs(final.dy) > 2)) {
+        commitRef.current(final.dx / strideRef.current, final.dy / strideRef.current)
+      }
+      dragOffsetRef.current = null
+      setDragOffset(null)
+      startRef.current = null
+    }
+    window.addEventListener("mousemove", onMove)
+    window.addEventListener("mouseup", onUp)
+    return () => {
+      window.removeEventListener("mousemove", onMove)
+      window.removeEventListener("mouseup", onUp)
+    }
+  }, [!!dragOffset])
+
+  return { dragOffset, onMouseDown }
+}
+
+// Decorative line overlay — anchored at (x, y), extends `length` cells to
+// the right, then rotated around its own midpoint. Rotation is set via the
+// inspector panel's number field (no drag-rotate handle in this HTML/table
+// canvas — see LineInspector in page.tsx).
+function LineOverlay({
+  line, stride, originX, originY, selected, onSelect, onCommitMove,
+}: {
+  line: LineBlock
+  stride: number
+  originX: number
+  originY: number
+  selected: boolean
+  onSelect: () => void
+  onCommitMove: (dx: number, dy: number) => void
+}) {
+  const { dragOffset, onMouseDown } = useOverlayDrag(stride, onSelect, onCommitMove)
+  const left = originX + line.x * stride
+  const top = originY + line.y * stride
+  const lengthPx = Math.max(stride * 0.25, line.length * stride)
+  const dx = dragOffset ? dragOffset.dx : 0
+  const dy = dragOffset ? dragOffset.dy : 0
+
+  return (
+    <div
+      onMouseDown={onMouseDown}
+      className="absolute cursor-move select-none"
+      style={{
+        left, top, width: lengthPx, height: 12,
+        transform: `translate(${dx}px, ${dy}px) rotate(${line.rotation}deg)`,
+        transformOrigin: "0 50%",
+      }}
+      title="Decorative line — drag to move, use the panel to rotate"
+    >
+      <div
+        className={cn("absolute left-0 top-1/2 -translate-y-1/2", selected ? "bg-primary" : "")}
+        style={{ width: lengthPx, height: 2, backgroundColor: selected ? undefined : (line.color || "#374151") }}
+      />
+    </div>
+  )
+}
+
+// Decorative circle overlay — centered at (x, y), diameter = radius * 2.
+function CircleOverlay({
+  circle, stride, originX, originY, selected, onSelect, onCommitMove,
+}: {
+  circle: CircleBlock
+  stride: number
+  originX: number
+  originY: number
+  selected: boolean
+  onSelect: () => void
+  onCommitMove: (dx: number, dy: number) => void
+}) {
+  const { dragOffset, onMouseDown } = useOverlayDrag(stride, onSelect, onCommitMove)
+  const diameterPx = Math.max(stride * 0.5, circle.radius * 2 * stride)
+  const cx = originX + circle.x * stride
+  const cy = originY + circle.y * stride
+  const dx = dragOffset ? dragOffset.dx : 0
+  const dy = dragOffset ? dragOffset.dy : 0
+
+  return (
+    <div
+      onMouseDown={onMouseDown}
+      className={cn(
+        "absolute flex cursor-move select-none items-center justify-center rounded-full text-[10px] font-semibold",
+        selected ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : "",
+      )}
+      style={{
+        left: cx - diameterPx / 2,
+        top: cy - diameterPx / 2,
+        width: diameterPx,
+        height: diameterPx,
+        backgroundColor: circle.fill || "#111827",
+        color: circle.color || "#FFFFFF",
+        transform: `translate(${dx}px, ${dy}px)`,
+      }}
+      title={circle.label || "Decorative circle"}
+    >
+      {circle.label}
     </div>
   )
 }

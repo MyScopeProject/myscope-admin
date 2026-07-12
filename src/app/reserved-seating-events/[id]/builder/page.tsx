@@ -29,14 +29,18 @@ import {
   type VisualSeatMapSeat,
 } from "@/lib/apiEndpoints"
 import toast from "react-hot-toast"
-import { ArrowLeft, Plus, Save, Trash2, Undo2 } from "lucide-react"
+import { ArrowLeft, Circle, Minus, Plus, Save, Trash2, Undo2 } from "lucide-react"
 import {
   type CellRange,
+  type CircleBlock,
   type GridCell,
+  type LineBlock,
   type SeatGrid,
   type SectionMeta,
   type StageBlock,
+  addCircle,
   addCol,
+  addLine,
   addRow,
   addStage,
   deleteSection,
@@ -44,11 +48,15 @@ import {
   emptyGrid,
   hydrateGrid,
   paintRange,
+  removeCircle,
   removeCol,
+  removeLine,
   removeRow,
   removeStage,
   setColLabel,
   setRowLabel,
+  updateCircle,
+  updateLine,
   updateStage,
   upsertSection,
 } from "./macroLayoutModel"
@@ -89,9 +97,11 @@ function BuilderInner() {
   // submits the "configure venue size" form on the first visit.
   const [grid, setGrid] = useState<SeatGrid | null>(null)
   const [selection, setSelection] = useState<CellRange | null>(null)
-  // Stage selection is mutually exclusive with cell selection — only one
-  // panel shows on the right at a time.
+  // Stage/line/circle selection is mutually exclusive with cell selection
+  // (and with each other) — only one panel shows on the right at a time.
   const [selectedStageId, setSelectedStageId] = useState<string | null>(null)
+  const [selectedLineId, setSelectedLineId] = useState<string | null>(null)
+  const [selectedCircleId, setSelectedCircleId] = useState<string | null>(null)
   const [lockedSeats, setLockedSeats] = useState(0)
 
   // Undo history — snapshot of the previous grid per mutation, capped at 50.
@@ -200,6 +210,7 @@ function BuilderInner() {
           kind: d.kind,
           x: d.x, y: d.y,
           width: d.width, height: d.height,
+          rotation: d.rotation,
           label: d.label, fill: d.fill, color: d.color,
         })),
         seats: derived.seats.map<VisualSeatMapSeat>(s => ({
@@ -313,12 +324,57 @@ function BuilderInner() {
             }
             updateGrid(addStage(grid, stage))
             setSelectedStageId(stage.id)
+            setSelectedLineId(null)
+            setSelectedCircleId(null)
             setSelection(null)
           }}
           title="Add a custom-sized stage"
           className="inline-flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm hover:bg-accent"
         >
           <Plus className="h-4 w-4" /> Add stage
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (!grid) return
+            const line: LineBlock = {
+              id: uid("line"),
+              x: Math.max(0, Math.floor(grid.cols / 2) - 2),
+              y: Math.max(0, Math.floor(grid.rows / 2)),
+              length: 4,
+              rotation: 0,
+            }
+            updateGrid(addLine(grid, line))
+            setSelectedLineId(line.id)
+            setSelectedStageId(null)
+            setSelectedCircleId(null)
+            setSelection(null)
+          }}
+          title="Add a decorative line (design only — doesn't affect seats)"
+          className="inline-flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm hover:bg-accent"
+        >
+          <Minus className="h-4 w-4" /> Add line
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (!grid) return
+            const circle: CircleBlock = {
+              id: uid("circle"),
+              x: Math.max(0, Math.floor(grid.cols / 2)),
+              y: Math.max(0, Math.floor(grid.rows / 2)),
+              radius: 1.5,
+            }
+            updateGrid(addCircle(grid, circle))
+            setSelectedCircleId(circle.id)
+            setSelectedStageId(null)
+            setSelectedLineId(null)
+            setSelection(null)
+          }}
+          title="Add a decorative circle (design only — doesn't affect seats)"
+          className="inline-flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm hover:bg-accent"
+        >
+          <Circle className="h-4 w-4" /> Add circle
         </button>
         <button
           type="button"
@@ -347,12 +403,20 @@ function BuilderInner() {
             selection={selection}
             onSelectionChange={(r) => {
               setSelection(r)
-              if (r) setSelectedStageId(null)
+              if (r) {
+                setSelectedStageId(null)
+                setSelectedLineId(null)
+                setSelectedCircleId(null)
+              }
             }}
             selectedStageId={selectedStageId}
             onStageSelect={(id) => {
               setSelectedStageId(id)
-              if (id) setSelection(null)
+              if (id) {
+                setSelection(null)
+                setSelectedLineId(null)
+                setSelectedCircleId(null)
+              }
             }}
             onStageMove={(id, dx, dy) => {
               const s = grid.stages.find(x => x.id === id)
@@ -361,6 +425,40 @@ function BuilderInner() {
               const ny = Math.max(0, Math.min(grid.rows - s.height, Math.round((s.y + dy) * 4) / 4))
               if (nx === s.x && ny === s.y) return
               updateGrid(updateStage(grid, id, { x: nx, y: ny }))
+            }}
+            selectedLineId={selectedLineId}
+            onLineSelect={(id) => {
+              setSelectedLineId(id)
+              if (id) {
+                setSelection(null)
+                setSelectedStageId(null)
+                setSelectedCircleId(null)
+              }
+            }}
+            onLineMove={(id, dx, dy) => {
+              const l = grid.lines.find(x => x.id === id)
+              if (!l) return
+              const nx = Math.max(0, Math.min(grid.cols, Math.round((l.x + dx) * 4) / 4))
+              const ny = Math.max(0, Math.min(grid.rows, Math.round((l.y + dy) * 4) / 4))
+              if (nx === l.x && ny === l.y) return
+              updateGrid(updateLine(grid, id, { x: nx, y: ny }))
+            }}
+            selectedCircleId={selectedCircleId}
+            onCircleSelect={(id) => {
+              setSelectedCircleId(id)
+              if (id) {
+                setSelection(null)
+                setSelectedStageId(null)
+                setSelectedLineId(null)
+              }
+            }}
+            onCircleMove={(id, dx, dy) => {
+              const c = grid.circles.find(x => x.id === id)
+              if (!c) return
+              const nx = Math.max(0, Math.min(grid.cols, Math.round((c.x + dx) * 4) / 4))
+              const ny = Math.max(0, Math.min(grid.rows, Math.round((c.y + dy) * 4) / 4))
+              if (nx === c.x && ny === c.y) return
+              updateGrid(updateCircle(grid, id, { x: nx, y: ny }))
             }}
             onMoveSelection={(dr, dc) => {
               if (!selection || (dr === 0 && dc === 0)) return
@@ -403,10 +501,14 @@ function BuilderInner() {
             ticketTypes={ticketTypes}
             selection={selection}
             selectedStageId={selectedStageId}
+            selectedLineId={selectedLineId}
+            selectedCircleId={selectedCircleId}
             sectionList={sectionList}
             seatsPerSection={seatsPerSection}
             onClearSelection={() => setSelection(null)}
             onClearStageSelection={() => setSelectedStageId(null)}
+            onClearLineSelection={() => setSelectedLineId(null)}
+            onClearCircleSelection={() => setSelectedCircleId(null)}
             onPaintRange={(paint) => {
               if (!selection) return
               updateGrid(paintRange(grid, selection, paint))
@@ -424,6 +526,16 @@ function BuilderInner() {
             onStageRemove={(id) => {
               updateGrid(removeStage(grid, id))
               setSelectedStageId(null)
+            }}
+            onLinePatch={(id, patch) => updateGrid(updateLine(grid, id, patch))}
+            onLineRemove={(id) => {
+              updateGrid(removeLine(grid, id))
+              setSelectedLineId(null)
+            }}
+            onCirclePatch={(id, patch) => updateGrid(updateCircle(grid, id, patch))}
+            onCircleRemove={(id) => {
+              updateGrid(removeCircle(grid, id))
+              setSelectedCircleId(null)
             }}
             onPatchGrid={(next) => updateGrid(next)}
             onAddRow={(at, side) => updateGrid(addRow(grid, at, side))}
@@ -574,29 +686,44 @@ function SetupScreen({
 // ---------------------------------------------------------------------------
 
 function RightPanel({
-  grid, ticketTypes, selection, selectedStageId, sectionList, seatsPerSection,
+  grid, ticketTypes, selection, selectedStageId, selectedLineId, selectedCircleId,
+  sectionList, seatsPerSection,
   onClearSelection,
   onClearStageSelection,
+  onClearLineSelection,
+  onClearCircleSelection,
   onPaintRange,
   onPaintWithSectionUpsert,
   onDeleteSection,
   onStagePatch,
   onStageRemove,
+  onLinePatch,
+  onLineRemove,
+  onCirclePatch,
+  onCircleRemove,
   onPatchGrid,
 }: {
   grid: SeatGrid
   ticketTypes: ReservedEventTicketType[]
   selection: CellRange | null
   selectedStageId: string | null
+  selectedLineId: string | null
+  selectedCircleId: string | null
   sectionList: SectionMeta[]
   seatsPerSection: Record<string, number>
   onClearSelection: () => void
   onClearStageSelection: () => void
+  onClearLineSelection: () => void
+  onClearCircleSelection: () => void
   onPaintRange: (paint: (cell: GridCell) => GridCell) => void
   onPaintWithSectionUpsert: (section: SectionMeta, paint: (cell: GridCell) => GridCell) => void
   onDeleteSection: (sectionId: string) => void
   onStagePatch: (id: string, patch: Partial<StageBlock>) => void
   onStageRemove: (id: string) => void
+  onLinePatch: (id: string, patch: Partial<LineBlock>) => void
+  onLineRemove: (id: string) => void
+  onCirclePatch: (id: string, patch: Partial<CircleBlock>) => void
+  onCircleRemove: (id: string) => void
   onPatchGrid: (next: SeatGrid) => void
   onAddRow: (at: number, side: "above" | "below") => void
   onRemoveRow: (at: number) => void
@@ -614,6 +741,32 @@ function RightPanel({
           onPatch={(patch) => onStagePatch(stage.id, patch)}
           onRemove={() => onStageRemove(stage.id)}
           onDeselect={onClearStageSelection}
+        />
+      )
+    }
+  }
+  if (selectedLineId) {
+    const line = grid.lines.find(l => l.id === selectedLineId)
+    if (line) {
+      return (
+        <LineInspector
+          line={line}
+          onPatch={(patch) => onLinePatch(line.id, patch)}
+          onRemove={() => onLineRemove(line.id)}
+          onDeselect={onClearLineSelection}
+        />
+      )
+    }
+  }
+  if (selectedCircleId) {
+    const circle = grid.circles.find(c => c.id === selectedCircleId)
+    if (circle) {
+      return (
+        <CircleInspector
+          circle={circle}
+          onPatch={(patch) => onCirclePatch(circle.id, patch)}
+          onRemove={() => onCircleRemove(circle.id)}
+          onDeselect={onClearCircleSelection}
         />
       )
     }
@@ -835,6 +988,124 @@ function StageInspector({
           onCommit={(v) => onPatch({ height: clamp(v, 1, Math.max(1, maxY - stage.y)) })}
         />
       </div>
+    </div>
+  )
+}
+
+// Inspector for a decorative line — length + rotation only. Purely visual:
+// doesn't create seats or affect availability/bookings.
+function LineInspector({
+  line, onPatch, onRemove, onDeselect,
+}: {
+  line: LineBlock
+  onPatch: (patch: Partial<LineBlock>) => void
+  onRemove: () => void
+  onDeselect: () => void
+}) {
+  return (
+    <div className="space-y-3 p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Line</h3>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onDeselect}
+            className="text-xs text-muted-foreground underline"
+          >
+            Deselect
+          </button>
+          <button
+            type="button"
+            onClick={onRemove}
+            title="Remove line"
+            className="rounded p-1 text-destructive hover:bg-destructive/10"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Drag the line on the canvas to move it. Design only — doesn&apos;t
+        create seats or affect bookings.
+      </p>
+      <div className="grid grid-cols-2 gap-2">
+        <NumberField
+          label="Length (cells)"
+          ariaLabel="Line length"
+          value={line.length}
+          step={0.5}
+          min={0.5}
+          max={100}
+          onCommit={(v) => onPatch({ length: v })}
+        />
+        <NumberField
+          label="Rotation (°)"
+          ariaLabel="Line rotation"
+          value={line.rotation}
+          step={5}
+          min={-180}
+          max={180}
+          onCommit={(v) => onPatch({ rotation: v })}
+        />
+      </div>
+    </div>
+  )
+}
+
+// Inspector for a decorative circle — optional caption + radius. Purely
+// visual: doesn't create seats or affect availability/bookings.
+function CircleInspector({
+  circle, onPatch, onRemove, onDeselect,
+}: {
+  circle: CircleBlock
+  onPatch: (patch: Partial<CircleBlock>) => void
+  onRemove: () => void
+  onDeselect: () => void
+}) {
+  return (
+    <div className="space-y-3 p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Circle</h3>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onDeselect}
+            className="text-xs text-muted-foreground underline"
+          >
+            Deselect
+          </button>
+          <button
+            type="button"
+            onClick={onRemove}
+            title="Remove circle"
+            className="rounded p-1 text-destructive hover:bg-destructive/10"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Drag the circle on the canvas to move it. Design only — doesn&apos;t
+        create seats or affect bookings.
+      </p>
+      <label className="block space-y-1">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Caption (optional)</span>
+        <input
+          aria-label="Circle caption"
+          value={circle.label ?? ""}
+          onChange={e => onPatch({ label: e.target.value })}
+          className="w-full rounded border bg-background px-2 py-1 text-sm"
+        />
+      </label>
+      <NumberField
+        label="Radius (cells)"
+        ariaLabel="Circle radius"
+        value={circle.radius}
+        step={0.25}
+        min={0.25}
+        max={50}
+        onCommit={(v) => onPatch({ radius: v })}
+      />
     </div>
   )
 }

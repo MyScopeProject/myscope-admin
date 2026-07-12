@@ -32,6 +32,28 @@ export interface StageBlock {
   label: string
 }
 
+// Purely decorative overlays — same free-form cell-unit positioning as
+// StageBlock, but never produce seats or affect booking/availability. They
+// exist only so admins can sketch walls, dividers, pillars, etc. on the map.
+export interface LineBlock {
+  id: string
+  x: number                        // start point, cell units
+  y: number                        // start point, cell units
+  length: number                   // cell units
+  rotation: number                 // degrees, 0 = pointing right
+  color?: string
+}
+
+export interface CircleBlock {
+  id: string
+  x: number                        // center, cell units
+  y: number                        // center, cell units
+  radius: number                   // cell units
+  label?: string
+  fill?: string
+  color?: string
+}
+
 export interface SeatGrid {
   rows: number
   cols: number
@@ -39,6 +61,9 @@ export interface SeatGrid {
   sections: Record<string, SectionMeta>
   // Free-form stage overlays (custom width × height, not tied to cells).
   stages: StageBlock[]
+  // Free-form decorative overlays — design only, no seats/booking impact.
+  lines: LineBlock[]
+  circles: CircleBlock[]
   // Optional per-row label overrides. Index 0 = top row. Blank/undefined =
   // auto (A, B, C, ...).
   rowLabels?: (string | undefined)[]
@@ -59,7 +84,7 @@ export function emptyGrid(): SeatGrid {
   for (let r = 0; r < rows; r++) {
     cells.push(Array.from({ length: cols }, () => ({ kind: "empty" }) as GridCell))
   }
-  return { rows, cols, cells, sections: {}, stages: [] }
+  return { rows, cols, cells, sections: {}, stages: [], lines: [], circles: [] }
 }
 
 // Add a stage at a default position (centered horizontally, near the top).
@@ -78,6 +103,27 @@ export function updateStage(grid: SeatGrid, stageId: string, patch: Partial<Stag
 // Remove a stage by id.
 export function removeStage(grid: SeatGrid, stageId: string): SeatGrid {
   return { ...grid, stages: grid.stages.filter(s => s.id !== stageId) }
+}
+
+// Lines and circles — same add/update/remove shape as stages above.
+export function addLine(grid: SeatGrid, line: LineBlock): SeatGrid {
+  return { ...grid, lines: [...grid.lines, line] }
+}
+export function updateLine(grid: SeatGrid, lineId: string, patch: Partial<LineBlock>): SeatGrid {
+  return { ...grid, lines: grid.lines.map(l => (l.id === lineId ? { ...l, ...patch } : l)) }
+}
+export function removeLine(grid: SeatGrid, lineId: string): SeatGrid {
+  return { ...grid, lines: grid.lines.filter(l => l.id !== lineId) }
+}
+
+export function addCircle(grid: SeatGrid, circle: CircleBlock): SeatGrid {
+  return { ...grid, circles: [...grid.circles, circle] }
+}
+export function updateCircle(grid: SeatGrid, circleId: string, patch: Partial<CircleBlock>): SeatGrid {
+  return { ...grid, circles: grid.circles.map(c => (c.id === circleId ? { ...c, ...patch } : c)) }
+}
+export function removeCircle(grid: SeatGrid, circleId: string): SeatGrid {
+  return { ...grid, circles: grid.circles.filter(c => c.id !== circleId) }
 }
 
 // Add a row at index. Side picks above/below the index.
@@ -213,11 +259,12 @@ export interface DerivedSeat {
 }
 
 export interface DerivedDecor {
-  kind: "rect" | "text"
+  kind: "rect" | "text" | "line" | "circle"
   x: number
   y: number
   width?: number
   height?: number
+  rotation?: number
   label?: string
   fill?: string
   color?: string
@@ -368,6 +415,37 @@ export function deriveLayout(grid: SeatGrid): {
     })
   }
 
+  // Free-form decorative lines — design only, no seat/booking effect.
+  // Stored as a start point + length + rotation (cell units / degrees);
+  // converted to a pre-rotation horizontal segment in pixel space, with
+  // rotation applied declaratively by the renderer around the segment's
+  // center (same convention as rect rotation below).
+  for (const l of grid.lines) {
+    decor.push({
+      kind: "line",
+      x: Math.round(l.x * CELL_PX),
+      y: Math.round(l.y * CELL_PX),
+      width: Math.round(l.length * CELL_PX),
+      height: 0,
+      rotation: l.rotation || undefined,
+      color: l.color || "#374151",
+    })
+  }
+
+  // Free-form decorative circles — design only, no seat/booking effect.
+  // width doubles as the pixel radius (no separate "radius" field on decor).
+  for (const c of grid.circles) {
+    decor.push({
+      kind: "circle",
+      x: Math.round(c.x * CELL_PX),
+      y: Math.round(c.y * CELL_PX),
+      width: Math.max(8, Math.round(c.radius * CELL_PX)),
+      label: c.label || undefined,
+      fill: c.fill || "#111827",
+      color: c.color || "#FFFFFF",
+    })
+  }
+
   // Hidden meta entry — encodes grid structure (total rows × cols, custom
   // row/col labels, seat-number start) so the spreadsheet shape survives a
   // round-trip through the API. Positioned far off-canvas so the consumer
@@ -440,12 +518,15 @@ interface ApiSeatLike {
 }
 
 interface ApiDecorLike {
-  kind: "rect" | "text" | "line"
+  kind: "rect" | "text" | "line" | "circle"
   x?: number
   y?: number
   width?: number
   height?: number
+  rotation?: number
   label?: string
+  fill?: string
+  color?: string
 }
 
 export function hydrateGrid(
@@ -514,8 +595,37 @@ export function hydrateGrid(
       })
     }
 
+    // Free-form decorative lines → grid.lines (in cell units).
+    const lines: LineBlock[] = []
+    for (const d of apiDecor) {
+      if (d.kind !== "line") continue
+      lines.push({
+        id: uid("line"),
+        x: Number(d.x ?? 0) / CELL_PX,
+        y: Number(d.y ?? 0) / CELL_PX,
+        length: Math.max(0.25, Number(d.width ?? CELL_PX) / CELL_PX),
+        rotation: Number(d.rotation ?? 0),
+        color: d.color || undefined,
+      })
+    }
+
+    // Free-form decorative circles → grid.circles (in cell units).
+    const circles: CircleBlock[] = []
+    for (const d of apiDecor) {
+      if (d.kind !== "circle") continue
+      circles.push({
+        id: uid("circle"),
+        x: Number(d.x ?? 0) / CELL_PX,
+        y: Number(d.y ?? 0) / CELL_PX,
+        radius: Math.max(0.25, Number(d.width ?? CELL_PX) / CELL_PX),
+        label: d.label || undefined,
+        fill: d.fill || undefined,
+        color: d.color || undefined,
+      })
+    }
+
     return {
-      rows: metaRows, cols: metaCols, cells, sections, stages,
+      rows: metaRows, cols: metaCols, cells, sections, stages, lines, circles,
       rowLabels: meta.rowLabels ? meta.rowLabels.map(v => v ?? undefined) : undefined,
       colLabels: meta.colLabels ? meta.colLabels.map(v => v ?? undefined) : undefined,
       seatNumberStart: meta.seatNumberStart ?? undefined,
@@ -598,7 +708,7 @@ export function hydrateGrid(
   const stages: StageBlock[] = []
   let extraRow = rowBuckets.length
   for (const d of apiDecor) {
-    if (d.kind === "line") continue
+    if (d.kind === "line" || d.kind === "circle") continue
     if (d.kind === "rect") {
       const xPx = Number(d.x ?? 0)
       const yPx = Number(d.y ?? 0)
@@ -619,7 +729,7 @@ export function hydrateGrid(
   }
 
   return {
-    rows, cols, cells, sections, stages,
+    rows, cols, cells, sections, stages, lines: [], circles: [],
     rowLabels,
   }
 }
