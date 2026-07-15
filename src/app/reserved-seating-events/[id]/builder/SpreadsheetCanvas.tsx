@@ -13,11 +13,13 @@ import { cn } from "@/lib/utils"
 import {
   type CellRange,
   type CircleBlock,
+  type GeneralSectionBlock,
   type GridCell,
   type LineBlock,
   type SeatGrid,
   type SectionMeta,
   type StageBlock,
+  type TextBlock,
   normRange,
 } from "./macroLayoutModel"
 
@@ -50,6 +52,14 @@ interface Props {
   selectedCircleId: string | null
   onCircleSelect: (id: string | null) => void
   onCircleMove: (id: string, dx: number, dy: number) => void
+  // Free-standing text caption selection — same mutual-exclusivity pattern.
+  selectedTextId: string | null
+  onTextSelect: (id: string | null) => void
+  onTextMove: (id: string, dx: number, dy: number) => void
+  // General-section box selection — same mutual-exclusivity pattern.
+  selectedGeneralSectionId: string | null
+  onGeneralSectionSelect: (id: string | null) => void
+  onGeneralSectionMove: (id: string, dx: number, dy: number) => void
   // Move the currently-selected range by (dr, dc) cells — clamped, copied
   // into the destination, source cleared. Fires once at drag end.
   onMoveSelection: (dr: number, dc: number) => void
@@ -80,6 +90,8 @@ export function SeatGridCanvas({
   selectedStageId, onStageSelect, onStageMove,
   selectedLineId, onLineSelect, onLineMove,
   selectedCircleId, onCircleSelect, onCircleMove,
+  selectedTextId, onTextSelect, onTextMove,
+  selectedGeneralSectionId, onGeneralSectionSelect, onGeneralSectionMove,
   onMoveSelection,
   onRowLabelChange, onColLabelChange,
   seatColor,
@@ -260,6 +272,8 @@ export function SeatGridCanvas({
             onStageSelect(null)
             onLineSelect(null)
             onCircleSelect(null)
+            onTextSelect(null)
+            onGeneralSectionSelect(null)
           }
         }}
       >
@@ -402,6 +416,37 @@ export function SeatGridCanvas({
             onSelectionChange(null)
           }}
           onCommitMove={(dx, dy) => onCircleMove(c.id, dx, dy)}
+        />
+      ))}
+      {grid.texts.map(t => (
+        <TextOverlay
+          key={t.id}
+          text={t}
+          stride={cellPx + CELL_BORDER_SPACING}
+          originX={cellOrigin.x}
+          originY={cellOrigin.y}
+          selected={selectedTextId === t.id}
+          onSelect={() => {
+            onTextSelect(t.id)
+            onSelectionChange(null)
+          }}
+          onCommitMove={(dx, dy) => onTextMove(t.id, dx, dy)}
+        />
+      ))}
+      {grid.generalSections.map(g => (
+        <GeneralSectionOverlay
+          key={g.id}
+          box={g}
+          cellPx={cellPx}
+          stride={cellPx + CELL_BORDER_SPACING}
+          originX={cellOrigin.x}
+          originY={cellOrigin.y}
+          selected={selectedGeneralSectionId === g.id}
+          onSelect={() => {
+            onGeneralSectionSelect(g.id)
+            onSelectionChange(null)
+          }}
+          onCommitMove={(dx, dy) => onGeneralSectionMove(g.id, dx, dy)}
         />
       ))}
       </div>
@@ -630,6 +675,85 @@ function CircleOverlay({
       title={circle.label || "Decorative circle"}
     >
       {circle.label}
+    </div>
+  )
+}
+
+// Free-standing text caption overlay — anchored at (x, y), draggable.
+function TextOverlay({
+  text, stride, originX, originY, selected, onSelect, onCommitMove,
+}: {
+  text: TextBlock
+  stride: number
+  originX: number
+  originY: number
+  selected: boolean
+  onSelect: () => void
+  onCommitMove: (dx: number, dy: number) => void
+}) {
+  const { dragOffset, onMouseDown } = useOverlayDrag(stride, onSelect, onCommitMove)
+  const left = originX + text.x * stride
+  const top = originY + text.y * stride
+  const dx = dragOffset ? dragOffset.dx : 0
+  const dy = dragOffset ? dragOffset.dy : 0
+
+  return (
+    <div
+      onMouseDown={onMouseDown}
+      className={cn(
+        "absolute cursor-move select-none whitespace-nowrap rounded px-1 text-sm font-semibold",
+        selected ? "ring-2 ring-primary ring-offset-1 ring-offset-background" : "",
+      )}
+      style={{
+        left, top,
+        color: text.color || "#374151",
+        transform: `translate(${dx}px, ${dy}px)`,
+      }}
+      title="Text caption — drag to move"
+    >
+      {text.text || "Text"}
+    </div>
+  )
+}
+
+// General-section box overlay — same mechanics as StageOverlay, distinct
+// styling so it doesn't get confused for the real stage. Purely a labeled
+// area; never marks cells as seats.
+function GeneralSectionOverlay({
+  box, cellPx, stride, originX, originY, selected, onSelect, onCommitMove,
+}: {
+  box: GeneralSectionBlock
+  cellPx: number
+  stride: number
+  originX: number
+  originY: number
+  selected: boolean
+  onSelect: () => void
+  onCommitMove: (dx: number, dy: number) => void
+}) {
+  const { dragOffset, onMouseDown } = useOverlayDrag(stride, onSelect, onCommitMove)
+  const left   = originX + box.x * stride
+  const top    = originY + box.y * stride
+  const width  = Math.max(stride, box.width  * stride - CELL_BORDER_SPACING)
+  const height = Math.max(stride, box.height * stride - CELL_BORDER_SPACING)
+  const dx = dragOffset ? dragOffset.dx : 0
+  const dy = dragOffset ? dragOffset.dy : 0
+
+  return (
+    <div
+      onMouseDown={onMouseDown}
+      className={cn(
+        "absolute cursor-move select-none rounded-md border-2 border-dashed border-blue-400 bg-blue-600/90 text-white shadow-md",
+        "flex items-center justify-center text-[11px] font-semibold uppercase tracking-[0.15em]",
+        selected ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : "",
+      )}
+      style={{
+        left, top, width, height,
+        transform: dragOffset ? `translate(${dx}px, ${dy}px)` : undefined,
+      }}
+      title={box.label}
+    >
+      {box.label || "GENERAL SECTION"}
     </div>
   )
 }

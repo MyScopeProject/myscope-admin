@@ -23,6 +23,8 @@ import {
   ListChecks,
   Loader2,
   Trash2,
+  Pin,
+  PinOff,
 } from "lucide-react"
 
 interface Event {
@@ -43,6 +45,7 @@ interface Event {
   }
   banner_url?: string | null
   category?: string
+  pinned?: boolean
   created_at: string
 }
 
@@ -83,6 +86,19 @@ export default function EventsPage() {
       fetchEvents()
     } catch (err: any) {
       toast.error(err.response?.data?.message || "Failed to approve event")
+    }
+  }
+
+  const handleTogglePin = async (event: Event) => {
+    const next = !event.pinned
+    // Optimistic update so the button flips instantly.
+    setEvents((prev) => prev.map((e) => (e.id === event.id ? { ...e, pinned: next } : e)))
+    try {
+      await adminAPI.setEventPinned(event.id, next)
+      toast.success(next ? "Event pinned to top" : "Event unpinned")
+    } catch (err: any) {
+      setEvents((prev) => prev.map((e) => (e.id === event.id ? { ...e, pinned: !next } : e)))
+      toast.error(err.response?.data?.message || "Failed to update pin")
     }
   }
 
@@ -235,8 +251,13 @@ export default function EventsPage() {
                 const sold = event.tickets_sold ?? 0
                 const cap = event.tickets_available ?? 0
                 return (
-                  <div key={event.id} className="bg-card border border-border rounded-lg overflow-hidden hover:border-primary/50 transition-colors">
-                    <div className="h-48 bg-primary/10 flex items-center justify-center overflow-hidden">
+                  <div key={event.id} className={`bg-card border rounded-lg overflow-hidden transition-colors ${event.pinned ? 'border-amber-500/60 hover:border-amber-500' : 'border-border hover:border-primary/50'}`}>
+                    <div className="relative h-48 bg-primary/10 flex items-center justify-center overflow-hidden">
+                      {event.pinned && (
+                        <span className="absolute left-2 top-2 z-10 inline-flex items-center gap-1 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-white shadow">
+                          <Pin className="h-3 w-3" /> Pinned
+                        </span>
+                      )}
                       {event.banner_url ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
@@ -310,6 +331,19 @@ export default function EventsPage() {
                       )}
 
                       <div className="pt-2 border-t border-border space-y-2">
+                        <button
+                          type="button"
+                          onClick={() => handleTogglePin(event)}
+                          className={`w-full px-3 py-2 text-sm rounded-md transition flex items-center justify-center gap-1.5 font-medium ${
+                            event.pinned
+                              ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25'
+                              : 'bg-muted text-muted-foreground hover:bg-muted/70'
+                          }`}
+                          title={event.pinned ? 'Unpin from top of events' : 'Pin to top of events'}
+                        >
+                          {event.pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+                          {event.pinned ? 'Pinned — click to unpin' : 'Pin to top'}
+                        </button>
                         <Link
                           href={`/events/${event.id}`}
                           className="w-full px-3 py-2 text-sm bg-primary/10 text-primary rounded-md hover:bg-primary/20 transition flex items-center justify-center gap-1.5 font-medium"

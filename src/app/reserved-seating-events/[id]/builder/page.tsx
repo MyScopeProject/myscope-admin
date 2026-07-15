@@ -29,20 +29,24 @@ import {
   type VisualSeatMapSeat,
 } from "@/lib/apiEndpoints"
 import toast from "react-hot-toast"
-import { ArrowLeft, Circle, Minus, Plus, Save, Trash2, Undo2 } from "lucide-react"
+import { ArrowLeft, Circle, Minus, Palette, Plus, Save, Square, Trash2, Type as TypeIcon, Undo2 } from "lucide-react"
 import {
   type CellRange,
   type CircleBlock,
+  type GeneralSectionBlock,
   type GridCell,
   type LineBlock,
   type SeatGrid,
   type SectionMeta,
   type StageBlock,
+  type TextBlock,
   addCircle,
   addCol,
+  addGeneralSection,
   addLine,
   addRow,
   addStage,
+  addText,
   deleteSection,
   deriveLayout,
   emptyGrid,
@@ -50,14 +54,19 @@ import {
   paintRange,
   removeCircle,
   removeCol,
+  removeGeneralSection,
   removeLine,
   removeRow,
   removeStage,
+  removeText,
   setColLabel,
   setRowLabel,
+  setTierColor,
   updateCircle,
+  updateGeneralSection,
   updateLine,
   updateStage,
+  updateText,
   upsertSection,
 } from "./macroLayoutModel"
 import { SeatGridCanvas } from "./SpreadsheetCanvas"
@@ -68,6 +77,10 @@ const uid = (prefix = "id") => `${prefix}_${Date.now().toString(36)}_${(++_uidCo
 // Tier swatch palette — must mirror the consumer picker so colors match.
 const TIER_PALETTE = ["#7F77DD", "#1D9E75", "#BA7517", "#D85A30", "#185FA5", "#993556", "#6B7280"]
 function tierColor(i: number) { return TIER_PALETTE[i % TIER_PALETTE.length] || TIER_PALETTE[0] }
+// Admin-chosen override wins over the palette-by-index default.
+function resolveTierColor(grid: SeatGrid, ticketTypeId: string, i: number) {
+  return grid.tierColors?.[ticketTypeId] || tierColor(i)
+}
 
 // ---------------------------------------------------------------------------
 // Page wrapper — auth + layout
@@ -102,6 +115,8 @@ function BuilderInner() {
   const [selectedStageId, setSelectedStageId] = useState<string | null>(null)
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null)
   const [selectedCircleId, setSelectedCircleId] = useState<string | null>(null)
+  const [selectedTextId, setSelectedTextId] = useState<string | null>(null)
+  const [selectedGeneralSectionId, setSelectedGeneralSectionId] = useState<string | null>(null)
   const [lockedSeats, setLockedSeats] = useState(0)
 
   // Undo history — snapshot of the previous grid per mutation, capped at 50.
@@ -265,7 +280,7 @@ function BuilderInner() {
   }
 
   const tierIndexById = (id: string) => ticketTypes.findIndex(t => t.id === id)
-  const seatColor = (id: string) => tierColor(tierIndexById(id))
+  const seatColor = (id: string) => resolveTierColor(grid, id, tierIndexById(id))
 
   const sectionList = Object.values(grid.sections)
   // Walk every cell once and compute both per-section and per-tier counts.
@@ -326,6 +341,8 @@ function BuilderInner() {
             setSelectedStageId(stage.id)
             setSelectedLineId(null)
             setSelectedCircleId(null)
+            setSelectedTextId(null)
+            setSelectedGeneralSectionId(null)
             setSelection(null)
           }}
           title="Add a custom-sized stage"
@@ -348,6 +365,8 @@ function BuilderInner() {
             setSelectedLineId(line.id)
             setSelectedStageId(null)
             setSelectedCircleId(null)
+            setSelectedTextId(null)
+            setSelectedGeneralSectionId(null)
             setSelection(null)
           }}
           title="Add a decorative line (design only — doesn't affect seats)"
@@ -369,12 +388,62 @@ function BuilderInner() {
             setSelectedCircleId(circle.id)
             setSelectedStageId(null)
             setSelectedLineId(null)
+            setSelectedTextId(null)
+            setSelectedGeneralSectionId(null)
             setSelection(null)
           }}
           title="Add a decorative circle (design only — doesn't affect seats)"
           className="inline-flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm hover:bg-accent"
         >
           <Circle className="h-4 w-4" /> Add circle
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (!grid) return
+            const text: TextBlock = {
+              id: uid("text"),
+              x: Math.max(0, Math.floor(grid.cols / 2) - 1),
+              y: Math.max(0, Math.floor(grid.rows / 2)),
+              text: "Text",
+            }
+            updateGrid(addText(grid, text))
+            setSelectedTextId(text.id)
+            setSelectedStageId(null)
+            setSelectedLineId(null)
+            setSelectedCircleId(null)
+            setSelectedGeneralSectionId(null)
+            setSelection(null)
+          }}
+          title="Add a text caption (design only — doesn't affect seats)"
+          className="inline-flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm hover:bg-accent"
+        >
+          <TypeIcon className="h-4 w-4" /> Add text
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (!grid) return
+            const box: GeneralSectionBlock = {
+              id: uid("generalSection"),
+              x: Math.max(0, Math.floor(grid.cols / 2) - 3),
+              y: Math.max(0, Math.floor(grid.rows / 2) - 1),
+              width: 6,
+              height: 2,
+              label: "GENERAL SECTION",
+            }
+            updateGrid(addGeneralSection(grid, box))
+            setSelectedGeneralSectionId(box.id)
+            setSelectedStageId(null)
+            setSelectedLineId(null)
+            setSelectedCircleId(null)
+            setSelectedTextId(null)
+            setSelection(null)
+          }}
+          title="Add a named box for a general (standing/GA) section — a visual label only, doesn't mark seats or change the ticket flow"
+          className="inline-flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm hover:bg-accent"
+        >
+          <Square className="h-4 w-4" /> Add general section
         </button>
         <button
           type="button"
@@ -407,6 +476,8 @@ function BuilderInner() {
                 setSelectedStageId(null)
                 setSelectedLineId(null)
                 setSelectedCircleId(null)
+                setSelectedTextId(null)
+                setSelectedGeneralSectionId(null)
               }
             }}
             selectedStageId={selectedStageId}
@@ -416,6 +487,8 @@ function BuilderInner() {
                 setSelection(null)
                 setSelectedLineId(null)
                 setSelectedCircleId(null)
+                setSelectedTextId(null)
+                setSelectedGeneralSectionId(null)
               }
             }}
             onStageMove={(id, dx, dy) => {
@@ -433,6 +506,8 @@ function BuilderInner() {
                 setSelection(null)
                 setSelectedStageId(null)
                 setSelectedCircleId(null)
+                setSelectedTextId(null)
+                setSelectedGeneralSectionId(null)
               }
             }}
             onLineMove={(id, dx, dy) => {
@@ -450,6 +525,8 @@ function BuilderInner() {
                 setSelection(null)
                 setSelectedStageId(null)
                 setSelectedLineId(null)
+                setSelectedTextId(null)
+                setSelectedGeneralSectionId(null)
               }
             }}
             onCircleMove={(id, dx, dy) => {
@@ -459,6 +536,44 @@ function BuilderInner() {
               const ny = Math.max(0, Math.min(grid.rows, Math.round((c.y + dy) * 4) / 4))
               if (nx === c.x && ny === c.y) return
               updateGrid(updateCircle(grid, id, { x: nx, y: ny }))
+            }}
+            selectedTextId={selectedTextId}
+            onTextSelect={(id) => {
+              setSelectedTextId(id)
+              if (id) {
+                setSelection(null)
+                setSelectedStageId(null)
+                setSelectedLineId(null)
+                setSelectedCircleId(null)
+                setSelectedGeneralSectionId(null)
+              }
+            }}
+            onTextMove={(id, dx, dy) => {
+              const t = grid.texts.find(x => x.id === id)
+              if (!t) return
+              const nx = Math.max(0, Math.min(grid.cols, Math.round((t.x + dx) * 4) / 4))
+              const ny = Math.max(0, Math.min(grid.rows, Math.round((t.y + dy) * 4) / 4))
+              if (nx === t.x && ny === t.y) return
+              updateGrid(updateText(grid, id, { x: nx, y: ny }))
+            }}
+            selectedGeneralSectionId={selectedGeneralSectionId}
+            onGeneralSectionSelect={(id) => {
+              setSelectedGeneralSectionId(id)
+              if (id) {
+                setSelection(null)
+                setSelectedStageId(null)
+                setSelectedLineId(null)
+                setSelectedCircleId(null)
+                setSelectedTextId(null)
+              }
+            }}
+            onGeneralSectionMove={(id, dx, dy) => {
+              const g = grid.generalSections.find(x => x.id === id)
+              if (!g) return
+              const nx = Math.max(0, Math.min(grid.cols - g.width, Math.round((g.x + dx) * 4) / 4))
+              const ny = Math.max(0, Math.min(grid.rows - g.height, Math.round((g.y + dy) * 4) / 4))
+              if (nx === g.x && ny === g.y) return
+              updateGrid(updateGeneralSection(grid, id, { x: nx, y: ny }))
             }}
             onMoveSelection={(dr, dc) => {
               if (!selection || (dr === 0 && dc === 0)) return
@@ -503,12 +618,16 @@ function BuilderInner() {
             selectedStageId={selectedStageId}
             selectedLineId={selectedLineId}
             selectedCircleId={selectedCircleId}
+            selectedTextId={selectedTextId}
+            selectedGeneralSectionId={selectedGeneralSectionId}
             sectionList={sectionList}
             seatsPerSection={seatsPerSection}
             onClearSelection={() => setSelection(null)}
             onClearStageSelection={() => setSelectedStageId(null)}
             onClearLineSelection={() => setSelectedLineId(null)}
             onClearCircleSelection={() => setSelectedCircleId(null)}
+            onClearTextSelection={() => setSelectedTextId(null)}
+            onClearGeneralSectionSelection={() => setSelectedGeneralSectionId(null)}
             onPaintRange={(paint) => {
               if (!selection) return
               updateGrid(paintRange(grid, selection, paint))
@@ -537,6 +656,16 @@ function BuilderInner() {
               updateGrid(removeCircle(grid, id))
               setSelectedCircleId(null)
             }}
+            onTextPatch={(id, patch) => updateGrid(updateText(grid, id, patch))}
+            onTextRemove={(id) => {
+              updateGrid(removeText(grid, id))
+              setSelectedTextId(null)
+            }}
+            onGeneralSectionPatch={(id, patch) => updateGrid(updateGeneralSection(grid, id, patch))}
+            onGeneralSectionRemove={(id) => {
+              updateGrid(removeGeneralSection(grid, id))
+              setSelectedGeneralSectionId(null)
+            }}
             onPatchGrid={(next) => updateGrid(next)}
             onAddRow={(at, side) => updateGrid(addRow(grid, at, side))}
             onRemoveRow={(at) => updateGrid(removeRow(grid, at))}
@@ -559,15 +688,32 @@ function BuilderInner() {
               // Highlight when the painted seat count doesn't match the
               // organizer's declared cap — too many or too few.
               const mismatch = hasCap && adminCount !== organizerCap
+              const resolvedColor = resolveTierColor(grid, tt.id, i)
+              const hasOverride = !!grid.tierColors?.[tt.id]
               return (
                 <div key={tt.id} className="space-y-0.5 py-0.5 text-xs">
                   <div className="flex items-center gap-2">
-                    <span
-                      aria-hidden="true"
-                      className="inline-block h-3 w-3 shrink-0 rounded-full"
-                      style={{ background: tierColor(i) }}
-                    />
+                    <span className="relative inline-flex h-3.5 w-3.5 shrink-0">
+                      <input
+                        type="color"
+                        aria-label={`${tt.name} color`}
+                        title="Pick a custom color for this tier"
+                        value={resolvedColor}
+                        onChange={(e) => updateGrid(setTierColor(grid, tt.id, e.target.value))}
+                        className="h-3.5 w-3.5 shrink-0 cursor-pointer rounded-full border-0 bg-transparent p-0 [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-full [&::-webkit-color-swatch]:border-0"
+                      />
+                    </span>
                     <span className="flex-1 truncate font-medium text-foreground">{tt.name}</span>
+                    {hasOverride && (
+                      <button
+                        type="button"
+                        onClick={() => updateGrid(setTierColor(grid, tt.id, undefined))}
+                        title="Reset to default color"
+                        className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      >
+                        <Palette className="h-3 w-3" />
+                      </button>
+                    )}
                     {tt.is_free_seating && (
                       <span className="shrink-0 rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">
                         Free
@@ -687,11 +833,14 @@ function SetupScreen({
 
 function RightPanel({
   grid, ticketTypes, selection, selectedStageId, selectedLineId, selectedCircleId,
+  selectedTextId, selectedGeneralSectionId,
   sectionList, seatsPerSection,
   onClearSelection,
   onClearStageSelection,
   onClearLineSelection,
   onClearCircleSelection,
+  onClearTextSelection,
+  onClearGeneralSectionSelection,
   onPaintRange,
   onPaintWithSectionUpsert,
   onDeleteSection,
@@ -701,6 +850,10 @@ function RightPanel({
   onLineRemove,
   onCirclePatch,
   onCircleRemove,
+  onTextPatch,
+  onTextRemove,
+  onGeneralSectionPatch,
+  onGeneralSectionRemove,
   onPatchGrid,
 }: {
   grid: SeatGrid
@@ -709,12 +862,16 @@ function RightPanel({
   selectedStageId: string | null
   selectedLineId: string | null
   selectedCircleId: string | null
+  selectedTextId: string | null
+  selectedGeneralSectionId: string | null
   sectionList: SectionMeta[]
   seatsPerSection: Record<string, number>
   onClearSelection: () => void
   onClearStageSelection: () => void
   onClearLineSelection: () => void
   onClearCircleSelection: () => void
+  onClearTextSelection: () => void
+  onClearGeneralSectionSelection: () => void
   onPaintRange: (paint: (cell: GridCell) => GridCell) => void
   onPaintWithSectionUpsert: (section: SectionMeta, paint: (cell: GridCell) => GridCell) => void
   onDeleteSection: (sectionId: string) => void
@@ -724,6 +881,10 @@ function RightPanel({
   onLineRemove: (id: string) => void
   onCirclePatch: (id: string, patch: Partial<CircleBlock>) => void
   onCircleRemove: (id: string) => void
+  onTextPatch: (id: string, patch: Partial<TextBlock>) => void
+  onTextRemove: (id: string) => void
+  onGeneralSectionPatch: (id: string, patch: Partial<GeneralSectionBlock>) => void
+  onGeneralSectionRemove: (id: string) => void
   onPatchGrid: (next: SeatGrid) => void
   onAddRow: (at: number, side: "above" | "below") => void
   onRemoveRow: (at: number) => void
@@ -771,6 +932,34 @@ function RightPanel({
       )
     }
   }
+  if (selectedTextId) {
+    const text = grid.texts.find(t => t.id === selectedTextId)
+    if (text) {
+      return (
+        <TextInspector
+          text={text}
+          onPatch={(patch) => onTextPatch(text.id, patch)}
+          onRemove={() => onTextRemove(text.id)}
+          onDeselect={onClearTextSelection}
+        />
+      )
+    }
+  }
+  if (selectedGeneralSectionId) {
+    const box = grid.generalSections.find(g => g.id === selectedGeneralSectionId)
+    if (box) {
+      return (
+        <GeneralSectionInspector
+          box={box}
+          maxX={grid.cols}
+          maxY={grid.rows}
+          onPatch={(patch) => onGeneralSectionPatch(box.id, patch)}
+          onRemove={() => onGeneralSectionRemove(box.id)}
+          onDeselect={onClearGeneralSectionSelection}
+        />
+      )
+    }
+  }
   if (selection) {
     return (
       <RangeActions
@@ -789,6 +978,7 @@ function RightPanel({
       <SectionList
         sections={sectionList}
         ticketTypes={ticketTypes}
+        tierColors={grid.tierColors}
         seatsPerSection={seatsPerSection}
         onDeleteSection={onDeleteSection}
       />
@@ -1110,6 +1300,140 @@ function CircleInspector({
   )
 }
 
+// Inspector for a free-standing text caption — text + optional color.
+// Purely visual: doesn't create seats or affect availability/bookings.
+function TextInspector({
+  text, onPatch, onRemove, onDeselect,
+}: {
+  text: TextBlock
+  onPatch: (patch: Partial<TextBlock>) => void
+  onRemove: () => void
+  onDeselect: () => void
+}) {
+  return (
+    <div className="space-y-3 p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Text</h3>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onDeselect}
+            className="text-xs text-muted-foreground underline"
+          >
+            Deselect
+          </button>
+          <button
+            type="button"
+            onClick={onRemove}
+            title="Remove text"
+            className="rounded p-1 text-destructive hover:bg-destructive/10"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Drag the text on the canvas to move it. Design only — doesn&apos;t
+        create seats or affect bookings.
+      </p>
+      <label className="block space-y-1">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Caption</span>
+        <input
+          aria-label="Text caption"
+          value={text.text}
+          onChange={e => onPatch({ text: e.target.value })}
+          className="w-full rounded border bg-background px-2 py-1 text-sm"
+        />
+      </label>
+      <label className="flex items-center gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Color</span>
+        <input
+          type="color"
+          aria-label="Text color"
+          value={text.color || "#374151"}
+          onChange={e => onPatch({ color: e.target.value })}
+          className="h-6 w-8 cursor-pointer rounded border-0 bg-transparent p-0"
+        />
+      </label>
+    </div>
+  )
+}
+
+// Inspector for a general-section box — caption + width/height, same shape
+// as the stage inspector. Purely visual: never marks cells as seats and
+// doesn't touch the existing general-section/free-seating ticket flow.
+function GeneralSectionInspector({
+  box, maxX, maxY, onPatch, onRemove, onDeselect,
+}: {
+  box: GeneralSectionBlock
+  maxX: number
+  maxY: number
+  onPatch: (patch: Partial<GeneralSectionBlock>) => void
+  onRemove: () => void
+  onDeselect: () => void
+}) {
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
+
+  return (
+    <div className="space-y-3 p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">General section</h3>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onDeselect}
+            className="text-xs text-muted-foreground underline"
+          >
+            Deselect
+          </button>
+          <button
+            type="button"
+            onClick={onRemove}
+            title="Remove general section"
+            className="rounded p-1 text-destructive hover:bg-destructive/10"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        A named box, like the stage — purely visual. It does not mark any
+        cells as seats and does not change the existing general-section /
+        free-seating ticket flow.
+      </p>
+      <label className="block space-y-1">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Caption</span>
+        <input
+          aria-label="General section caption"
+          value={box.label}
+          onChange={e => onPatch({ label: e.target.value })}
+          className="w-full rounded border bg-background px-2 py-1 text-sm"
+        />
+      </label>
+      <div className="grid grid-cols-2 gap-2">
+        <NumberField
+          label="Width (cells)"
+          ariaLabel="General section width"
+          value={box.width}
+          step={0.5}
+          min={1}
+          max={Math.max(1, maxX - box.x)}
+          onCommit={(v) => onPatch({ width: clamp(v, 1, Math.max(1, maxX - box.x)) })}
+        />
+        <NumberField
+          label="Height (cells)"
+          ariaLabel="General section height"
+          value={box.height}
+          step={0.5}
+          min={1}
+          max={Math.max(1, maxY - box.y)}
+          onCommit={(v) => onPatch({ height: clamp(v, 1, Math.max(1, maxY - box.y)) })}
+        />
+      </div>
+    </div>
+  )
+}
+
 // Robust number field for the stage inspector. Controlled-number-input
 // spinner arrows are unreliable in React when the value is at a non-step-
 // aligned float (which happens after dragging), so we replace them with
@@ -1258,7 +1582,7 @@ function RangeActions({
                 onClick={() => assignToExisting(s.id)}
                 className="flex items-center gap-2 rounded border bg-background px-2.5 py-1.5 text-left text-sm hover:bg-accent"
               >
-                <TierDotById id={s.defaultTicketTypeId} ticketTypes={ticketTypes} />
+                <TierDotById id={s.defaultTicketTypeId} ticketTypes={ticketTypes} tierColors={grid.tierColors} />
                 <span className="flex-1 truncate">{s.name}</span>
               </button>
             ))}
@@ -1335,10 +1659,11 @@ function RangeActions({
 }
 
 function SectionList({
-  sections, ticketTypes, seatsPerSection, onDeleteSection,
+  sections, ticketTypes, tierColors, seatsPerSection, onDeleteSection,
 }: {
   sections: SectionMeta[]
   ticketTypes: ReservedEventTicketType[]
+  tierColors?: Record<string, string>
   seatsPerSection: Record<string, number>
   onDeleteSection: (sectionId: string) => void
 }) {
@@ -1358,7 +1683,7 @@ function SectionList({
             const tt = ticketTypes.find(t => t.id === s.defaultTicketTypeId)
             return (
               <li key={s.id} className="flex items-center gap-2 rounded-md border bg-background p-2 text-sm">
-                <TierDotById id={s.defaultTicketTypeId} ticketTypes={ticketTypes} />
+                <TierDotById id={s.defaultTicketTypeId} ticketTypes={ticketTypes} tierColors={tierColors} />
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium text-foreground">{s.name}</div>
                   <div className="truncate text-[11px] text-muted-foreground">
@@ -1415,9 +1740,9 @@ function SeatNumberStartField({
   )
 }
 
-function TierDotById({ id, ticketTypes }: { id: string; ticketTypes: ReservedEventTicketType[] }) {
+function TierDotById({ id, ticketTypes, tierColors }: { id: string; ticketTypes: ReservedEventTicketType[]; tierColors?: Record<string, string> }) {
   const idx = ticketTypes.findIndex(t => t.id === id)
-  const c = tierColor(idx >= 0 ? idx : 0)
+  const c = tierColors?.[id] || tierColor(idx >= 0 ? idx : 0)
   return (
     <span
       aria-hidden="true"

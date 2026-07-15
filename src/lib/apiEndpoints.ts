@@ -40,6 +40,9 @@ export const adminAPI = {
   setEventFeatured: (id: string, featured: boolean) =>
     api.patch(`/admin/events/${id}/featured`, { featured }),
 
+  setEventPinned: (id: string, pinned: boolean) =>
+    api.patch(`/admin/events/${id}/pinned`, { pinned }),
+
   // Pending-edits moderation queue. When an organizer edits an APPROVED
   // event, the change is queued here instead of going live. Admin reviews
   // the diff and either applies it to the live row or declines (with an
@@ -562,7 +565,7 @@ export interface VisualSeatMapSeat {
 }
 export interface VisualSeatMapDecor {
   id?: string
-  kind: 'rect' | 'text' | 'line' | 'circle'
+  kind: 'rect' | 'text' | 'line' | 'circle' | 'freetext' | 'generalbox'
   x?: number
   y?: number
   width?: number

@@ -54,6 +54,28 @@ export interface CircleBlock {
   color?: string
 }
 
+// Free-standing text caption — same free-form cell-unit positioning as
+// lines/circles. Design only, no seats/booking impact.
+export interface TextBlock {
+  id: string
+  x: number                        // cell units
+  y: number                        // cell units
+  text: string
+  color?: string
+}
+
+// A named box, visually identical to a stage block, but purely a label for
+// an area (e.g. "General Section") — does NOT mark any cells as seats and
+// has no effect on the existing general-section/free-seating ticket flow.
+export interface GeneralSectionBlock {
+  id: string
+  x: number                        // cell units, top-left
+  y: number                        // cell units, top-left
+  width: number                    // cell units
+  height: number                   // cell units
+  label: string
+}
+
 export interface SeatGrid {
   rows: number
   cols: number
@@ -64,6 +86,11 @@ export interface SeatGrid {
   // Free-form decorative overlays — design only, no seats/booking impact.
   lines: LineBlock[]
   circles: CircleBlock[]
+  texts: TextBlock[]
+  generalSections: GeneralSectionBlock[]
+  // Optional per-ticket-type color override, keyed by ticket_type_id. When
+  // absent for a tier, the UI falls back to the palette-by-index color.
+  tierColors?: Record<string, string>
   // Optional per-row label overrides. Index 0 = top row. Blank/undefined =
   // auto (A, B, C, ...).
   rowLabels?: (string | undefined)[]
@@ -84,7 +111,7 @@ export function emptyGrid(): SeatGrid {
   for (let r = 0; r < rows; r++) {
     cells.push(Array.from({ length: cols }, () => ({ kind: "empty" }) as GridCell))
   }
-  return { rows, cols, cells, sections: {}, stages: [], lines: [], circles: [] }
+  return { rows, cols, cells, sections: {}, stages: [], lines: [], circles: [], texts: [], generalSections: [] }
 }
 
 // Add a stage at a default position (centered horizontally, near the top).
@@ -124,6 +151,37 @@ export function updateCircle(grid: SeatGrid, circleId: string, patch: Partial<Ci
 }
 export function removeCircle(grid: SeatGrid, circleId: string): SeatGrid {
   return { ...grid, circles: grid.circles.filter(c => c.id !== circleId) }
+}
+
+// Free-standing text captions — same add/update/remove shape as lines/circles.
+export function addText(grid: SeatGrid, text: TextBlock): SeatGrid {
+  return { ...grid, texts: [...grid.texts, text] }
+}
+export function updateText(grid: SeatGrid, textId: string, patch: Partial<TextBlock>): SeatGrid {
+  return { ...grid, texts: grid.texts.map(t => (t.id === textId ? { ...t, ...patch } : t)) }
+}
+export function removeText(grid: SeatGrid, textId: string): SeatGrid {
+  return { ...grid, texts: grid.texts.filter(t => t.id !== textId) }
+}
+
+// General-section boxes — same add/update/remove shape as stages. Purely a
+// named visual box; never marks cells as seats.
+export function addGeneralSection(grid: SeatGrid, box: GeneralSectionBlock): SeatGrid {
+  return { ...grid, generalSections: [...grid.generalSections, box] }
+}
+export function updateGeneralSection(grid: SeatGrid, boxId: string, patch: Partial<GeneralSectionBlock>): SeatGrid {
+  return { ...grid, generalSections: grid.generalSections.map(g => (g.id === boxId ? { ...g, ...patch } : g)) }
+}
+export function removeGeneralSection(grid: SeatGrid, boxId: string): SeatGrid {
+  return { ...grid, generalSections: grid.generalSections.filter(g => g.id !== boxId) }
+}
+
+// Set (or clear, when color is undefined) a ticket tier's color override.
+export function setTierColor(grid: SeatGrid, ticketTypeId: string, color: string | undefined): SeatGrid {
+  const next = { ...(grid.tierColors ?? {}) }
+  if (color) next[ticketTypeId] = color
+  else delete next[ticketTypeId]
+  return { ...grid, tierColors: next }
 }
 
 // Add a row at index. Side picks above/below the index.
@@ -259,7 +317,7 @@ export interface DerivedSeat {
 }
 
 export interface DerivedDecor {
-  kind: "rect" | "text" | "line" | "circle"
+  kind: "rect" | "text" | "line" | "circle" | "freetext" | "generalbox"
   x: number
   y: number
   width?: number
@@ -446,10 +504,38 @@ export function deriveLayout(grid: SeatGrid): {
     })
   }
 
+  // Free-standing text captions — design only, no seat/booking effect.
+  for (const t of grid.texts) {
+    decor.push({
+      kind: "freetext",
+      x: Math.round(t.x * CELL_PX),
+      y: Math.round(t.y * CELL_PX),
+      label: t.text || "Text",
+      color: t.color || "#111827",
+    })
+  }
+
+  // General-section boxes — visually a named box like a stage, but purely
+  // decorative: never marks cells as seats, doesn't touch the existing
+  // general-section/free-seating ticket flow.
+  for (const g of grid.generalSections) {
+    decor.push({
+      kind: "generalbox",
+      x: Math.round(g.x * CELL_PX),
+      y: Math.round(g.y * CELL_PX),
+      width:  Math.max(20, Math.round(g.width  * CELL_PX)),
+      height: Math.max(20, Math.round(g.height * CELL_PX)),
+      label: g.label || "GENERAL SECTION",
+      fill: "#2563EB",
+      color: "#FFFFFF",
+    })
+  }
+
   // Hidden meta entry — encodes grid structure (total rows × cols, custom
-  // row/col labels, seat-number start) so the spreadsheet shape survives a
-  // round-trip through the API. Positioned far off-canvas so the consumer
-  // renderer doesn't show it. Picked up by hydrateGrid() on reload.
+  // row/col labels, seat-number start, tier color overrides) so the
+  // spreadsheet shape survives a round-trip through the API. Positioned far
+  // off-canvas so the consumer renderer doesn't show it. Picked up by
+  // hydrateGrid() on reload.
   decor.push({
     kind: "text",
     x: META_OFFSCREEN,
@@ -460,6 +546,7 @@ export function deriveLayout(grid: SeatGrid): {
       rowLabels: grid.rowLabels ?? null,
       colLabels: grid.colLabels ?? null,
       seatNumberStart: grid.seatNumberStart ?? null,
+      tierColors: grid.tierColors ?? null,
     }),
   })
 
@@ -475,6 +562,7 @@ interface MacroLayoutMeta {
   rowLabels: (string | null)[] | null
   colLabels: (string | null)[] | null
   seatNumberStart: number | null
+  tierColors: Record<string, string> | null
 }
 
 // Pull the meta entry out of an apiDecor list (returns the parsed payload +
@@ -518,7 +606,7 @@ interface ApiSeatLike {
 }
 
 interface ApiDecorLike {
-  kind: "rect" | "text" | "line" | "circle"
+  kind: "rect" | "text" | "line" | "circle" | "freetext" | "generalbox"
   x?: number
   y?: number
   width?: number
@@ -624,11 +712,43 @@ export function hydrateGrid(
       })
     }
 
+    // Free-standing text captions → grid.texts (in cell units).
+    const texts: TextBlock[] = []
+    for (const d of apiDecor) {
+      if (d.kind !== "freetext") continue
+      texts.push({
+        id: uid("text"),
+        x: Number(d.x ?? 0) / CELL_PX,
+        y: Number(d.y ?? 0) / CELL_PX,
+        text: d.label || "",
+        color: d.color || undefined,
+      })
+    }
+
+    // General-section boxes → grid.generalSections (in cell units).
+    const generalSections: GeneralSectionBlock[] = []
+    for (const d of apiDecor) {
+      if (d.kind !== "generalbox") continue
+      const xPx = Number(d.x ?? 0)
+      const yPx = Number(d.y ?? 0)
+      const wPx = Number(d.width  ?? 200)
+      const hPx = Number(d.height ?? 30)
+      generalSections.push({
+        id: uid("generalSection"),
+        x: xPx / CELL_PX,
+        y: yPx / CELL_PX,
+        width:  Math.max(1, wPx / CELL_PX),
+        height: Math.max(1, hPx / CELL_PX),
+        label: d.label || "GENERAL SECTION",
+      })
+    }
+
     return {
-      rows: metaRows, cols: metaCols, cells, sections, stages, lines, circles,
+      rows: metaRows, cols: metaCols, cells, sections, stages, lines, circles, texts, generalSections,
       rowLabels: meta.rowLabels ? meta.rowLabels.map(v => v ?? undefined) : undefined,
       colLabels: meta.colLabels ? meta.colLabels.map(v => v ?? undefined) : undefined,
       seatNumberStart: meta.seatNumberStart ?? undefined,
+      tierColors: meta.tierColors ?? undefined,
     }
   }
 
@@ -708,7 +828,7 @@ export function hydrateGrid(
   const stages: StageBlock[] = []
   let extraRow = rowBuckets.length
   for (const d of apiDecor) {
-    if (d.kind === "line" || d.kind === "circle") continue
+    if (d.kind === "line" || d.kind === "circle" || d.kind === "freetext" || d.kind === "generalbox") continue
     if (d.kind === "rect") {
       const xPx = Number(d.x ?? 0)
       const yPx = Number(d.y ?? 0)
@@ -729,7 +849,7 @@ export function hydrateGrid(
   }
 
   return {
-    rows, cols, cells, sections, stages, lines: [], circles: [],
+    rows, cols, cells, sections, stages, lines: [], circles: [], texts: [], generalSections: [],
     rowLabels,
   }
 }
