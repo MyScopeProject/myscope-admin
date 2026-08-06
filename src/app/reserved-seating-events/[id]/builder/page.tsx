@@ -74,6 +74,12 @@ import { SeatGridCanvas } from "./SpreadsheetCanvas"
 let _uidCounter = 0
 const uid = (prefix = "id") => `${prefix}_${Date.now().toString(36)}_${(++_uidCounter).toString(36)}`
 
+// Per-axis grid size cap. Not truly unbounded — a 1000x1000 grid is already
+// 1,000,000 cells (far beyond any real venue's single-section size) and
+// exists purely as a guardrail against a mistyped value (e.g. "99999999")
+// freezing the browser tab, not a realistic ceiling for actual venues.
+const MAX_GRID_DIM = 1000
+
 // Tier swatch palette — must mirror the consumer picker so colors match.
 const TIER_PALETTE = ["#7F77DD", "#1D9E75", "#BA7517", "#D85A30", "#185FA5", "#993556", "#6B7280"]
 function tierColor(i: number) { return TIER_PALETTE[i % TIER_PALETTE.length] || TIER_PALETTE[0] }
@@ -254,6 +260,37 @@ function BuilderInner() {
       setSaving(false)
     }
   }, [eventId, event, grid, router])
+
+  // ----- Keyboard: Ctrl/Cmd+S = save --------------------------------------
+  // Prevents the browser's native "Save page" dialog and saves the seat map
+  // instead — the seat count in a real venue design makes losing it to a
+  // missed manual click expensive to redo.
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === "s" || e.key === "S")) {
+        e.preventDefault()
+        if (!saving) save()
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [save, saving])
+
+  // ----- Warn before leaving with unsaved changes -------------------------
+  // A closed tab / back-button navigation with a half-built (or fully-built
+  // but unsaved) layout is unrecoverable — the grid only lives in memory
+  // until "Save seat map" (or Ctrl/Cmd+S) round-trips it to the API.
+
+  useEffect(() => {
+    if (!dirty) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ""
+    }
+    window.addEventListener("beforeunload", onBeforeUnload)
+    return () => window.removeEventListener("beforeunload", onBeforeUnload)
+  }, [dirty])
 
   // ----- Render -----------------------------------------------------------
 
@@ -786,9 +823,9 @@ function SetupScreen({
             <input
               aria-label="Total rows"
               type="number"
-              min={1} max={200}
+              min={1} max={MAX_GRID_DIM}
               value={rows}
-              onChange={e => setRows(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}
+              onChange={e => setRows(Math.max(1, Math.min(MAX_GRID_DIM, Number(e.target.value) || 1)))}
               className="w-full rounded border bg-background px-3 py-2 text-sm"
             />
           </label>
@@ -799,9 +836,9 @@ function SetupScreen({
             <input
               aria-label="Total columns"
               type="number"
-              min={1} max={200}
+              min={1} max={MAX_GRID_DIM}
               value={cols}
-              onChange={e => setCols(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}
+              onChange={e => setCols(Math.max(1, Math.min(MAX_GRID_DIM, Number(e.target.value) || 1)))}
               className="w-full rounded border bg-background px-3 py-2 text-sm"
             />
           </label>
@@ -1026,8 +1063,8 @@ function GridSizeEditor({
   })()
 
   const apply = () => {
-    const newRows = Math.max(1, Math.min(200, rowsDraft))
-    const newCols = Math.max(1, Math.min(200, colsDraft))
+    const newRows = Math.max(1, Math.min(MAX_GRID_DIM, rowsDraft))
+    const newCols = Math.max(1, Math.min(MAX_GRID_DIM, colsDraft))
     if (newRows === grid.rows && newCols === grid.cols) return
     if (lostSeats > 0) {
       const ok = window.confirm(
@@ -1050,8 +1087,8 @@ function GridSizeEditor({
   }
 
   const bump = (axis: "rows" | "cols", delta: number) => {
-    if (axis === "rows") setRowsDraft(r => Math.max(1, Math.min(200, r + delta)))
-    else                 setColsDraft(c => Math.max(1, Math.min(200, c + delta)))
+    if (axis === "rows") setRowsDraft(r => Math.max(1, Math.min(MAX_GRID_DIM, r + delta)))
+    else                 setColsDraft(c => Math.max(1, Math.min(MAX_GRID_DIM, c + delta)))
   }
 
   return (
@@ -1066,9 +1103,9 @@ function GridSizeEditor({
             <button type="button" onClick={() => bump("rows", -1)} className="px-2 text-sm hover:bg-muted" aria-label="Decrease rows">−</button>
             <input
               aria-label="Total rows"
-              type="number" min={1} max={200}
+              type="number" min={1} max={MAX_GRID_DIM}
               value={rowsDraft}
-              onChange={e => setRowsDraft(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}
+              onChange={e => setRowsDraft(Math.max(1, Math.min(MAX_GRID_DIM, Number(e.target.value) || 1)))}
               className="min-w-0 flex-1 bg-transparent px-1 text-center text-sm focus:outline-none"
             />
             <button type="button" onClick={() => bump("rows", 1)} className="px-2 text-sm hover:bg-muted" aria-label="Increase rows">+</button>
@@ -1080,9 +1117,9 @@ function GridSizeEditor({
             <button type="button" onClick={() => bump("cols", -1)} className="px-2 text-sm hover:bg-muted" aria-label="Decrease cols">−</button>
             <input
               aria-label="Total cols"
-              type="number" min={1} max={200}
+              type="number" min={1} max={MAX_GRID_DIM}
               value={colsDraft}
-              onChange={e => setColsDraft(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}
+              onChange={e => setColsDraft(Math.max(1, Math.min(MAX_GRID_DIM, Number(e.target.value) || 1)))}
               className="min-w-0 flex-1 bg-transparent px-1 text-center text-sm focus:outline-none"
             />
             <button type="button" onClick={() => bump("cols", 1)} className="px-2 text-sm hover:bg-muted" aria-label="Increase cols">+</button>
