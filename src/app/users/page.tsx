@@ -12,15 +12,23 @@ import toast from "react-hot-toast"
 import {
   Users,
   Search,
+  Eye,
   Plus,
-  Edit,
+  Pencil,
   Trash2,
   Ban,
   CheckCircle2,
   XCircle,
   Filter,
-  Download,
-  Mail
+  Mail,
+  Phone,
+  MapPin,
+  IdCard,
+  Calendar,
+  BadgeCheck,
+  ShieldAlert,
+  X,
+  Loader
 } from "lucide-react"
 
 interface User {
@@ -30,8 +38,12 @@ interface User {
   role: string
   status?: string
   created_at: string
-  last_login?: string
   profile_image?: string
+  phone?: string | null
+  phone_verified?: boolean
+  city?: string | null
+  nic?: string | null
+  provider?: string
 }
 
 export default function UsersPage() {
@@ -42,8 +54,7 @@ export default function UsersPage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [roleFilter, setRoleFilter] = useState("all")
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const [showEditModal, setShowEditModal] = useState(false)
-  const [selectedUser, setSelectedUser] = useState<User | null>(null)
+  const [detailsUserId, setDetailsUserId] = useState<string | null>(null)
 
   useEffect(() => {
     fetchUsers()
@@ -138,9 +149,8 @@ export default function UsersPage() {
     }
   }
 
-  const handleEditUser = (user: User) => {
-    setSelectedUser(user)
-    setShowEditModal(true)
+  const handleViewUser = (user: User) => {
+    setDetailsUserId(user.id)
   }
 
   const filteredUsers = users.filter(user => {
@@ -241,10 +251,6 @@ export default function UsersPage() {
                   <option value="superadmin">Super Admin</option>
                 </select>
               </div>
-              <button type="button" className="inline-flex items-center px-4 py-2 border border-border text-foreground rounded-md hover:bg-accent hover:text-accent-foreground transition">
-                <Download className="mr-2 h-4 w-4" />
-                Export
-              </button>
             </div>
           </div>
 
@@ -353,11 +359,11 @@ export default function UsersPage() {
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                           <div className="flex items-center justify-end gap-1">
                             <button
-                              onClick={() => handleEditUser(user)}
+                              onClick={() => handleViewUser(user)}
                               className="p-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition"
-                              title="Edit user"
+                              title="View details"
                             >
-                              <Edit className="h-4 w-4" />
+                              <Eye className="h-4 w-4" />
                             </button>
                             {user.role === 'user' && (
                               <button
@@ -412,22 +418,26 @@ export default function UsersPage() {
           )}
         </div>
 
-        {/* Create/Edit Modal */}
-        {(showCreateModal || showEditModal) && (
-          <UserModal
-            user={selectedUser}
-            isOpen={showCreateModal || showEditModal}
-            onClose={() => {
-              setShowCreateModal(false)
-              setShowEditModal(false)
-              setSelectedUser(null)
-            }}
+        {/* Create Modal */}
+        {showCreateModal && (
+          <CreateUserModal
+            onClose={() => setShowCreateModal(false)}
             onSuccess={() => {
               fetchUsers()
               setShowCreateModal(false)
-              setShowEditModal(false)
-              setSelectedUser(null)
             }}
+          />
+        )}
+
+        {/* User Details — fetches the full record itself so it always has
+            phone/city/nic even though the table row above only needs the
+            list-endpoint fields. */}
+        {detailsUserId && (
+          <UserDetailsModal
+            userId={detailsUserId}
+            currentAdminId={currentUser?.id}
+            onClose={() => setDetailsUserId(null)}
+            onChanged={fetchUsers}
           />
         )}
       </AdminLayout>
@@ -475,21 +485,17 @@ function StatCard({ title, value, tone = "primary" }: { title: string; value: nu
   )
 }
 
-function UserModal({ 
-  user, 
-  isOpen, 
-  onClose, 
-  onSuccess 
-}: { 
-  user: User | null
-  isOpen: boolean
+function CreateUserModal({
+  onClose,
+  onSuccess,
+}: {
   onClose: () => void
   onSuccess: () => void
 }) {
   const [formData, setFormData] = useState({
-    name: user?.name || "",
-    email: user?.email || "",
-    role: user?.role || "user",
+    name: "",
+    email: "",
+    role: "user",
     password: ""
   })
   const [loading, setLoading] = useState(false)
@@ -497,17 +503,9 @@ function UserModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
-
     try {
-      if (user) {
-        // Update existing user
-        await adminAPI.updateUser(user.id, formData)
-        toast.success("User updated successfully")
-      } else {
-        // Create new user
-        await adminAPI.createUser(formData)
-        toast.success("User created successfully")
-      }
+      await adminAPI.createUser(formData)
+      toast.success("User created successfully")
       onSuccess()
     } catch (err: any) {
       toast.error(err.response?.data?.message || "Operation failed")
@@ -516,15 +514,11 @@ function UserModal({
     }
   }
 
-  if (!isOpen) return null
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
       <div className="bg-card border border-border rounded-lg max-w-md w-full p-6">
-        <h2 className="text-2xl font-bold text-foreground mb-4">
-          {user ? "Edit User" : "Create New User"}
-        </h2>
-        
+        <h2 className="text-2xl font-bold text-foreground mb-4">Create New User</h2>
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-foreground mb-2">
@@ -572,21 +566,19 @@ function UserModal({
             </select>
           </div>
 
-          {!user && (
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-2">
-                Password
-              </label>
-              <input
-                type="password"
-                value={formData.password}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                required={!user}
-                minLength={6}
-              />
-            </div>
-          )}
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-2">
+              Password
+            </label>
+            <input
+              type="password"
+              value={formData.password}
+              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+              className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              required
+              minLength={6}
+            />
+          </div>
 
           <div className="flex gap-3 pt-4">
             <button
@@ -601,10 +593,252 @@ function UserModal({
               disabled={loading}
               className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition disabled:opacity-50"
             >
-              {loading ? "Saving..." : user ? "Update" : "Create"}
+              {loading ? "Saving..." : "Create"}
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * User Details — replaces the old bare "Edit User" modal. Fetches the full
+ * record itself (getUserById) so it always has phone/city/nic regardless of
+ * what the list endpoint returned, shows it read-only by default, and only
+ * exposes an edit form for the fields PUT /admin/users/:id actually accepts
+ * (name, email, role, status) rather than pretending everything is editable.
+ */
+function UserDetailsModal({
+  userId,
+  currentAdminId,
+  onClose,
+  onChanged,
+}: {
+  userId: string
+  currentAdminId?: string
+  onClose: () => void
+  onChanged: () => void
+}) {
+  const [user, setUser] = useState<User | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [formData, setFormData] = useState({ name: "", email: "", role: "user" })
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    adminAPI.getUserById(userId)
+      .then((res: any) => {
+        if (cancelled) return
+        const u = res.data?.data?.user as User
+        setUser(u)
+        setFormData({ name: u.name || "", email: u.email || "", role: u.role })
+      })
+      .catch((err: any) => {
+        if (cancelled) return
+        toast.error(err.response?.data?.message || "Failed to load user")
+        onClose()
+      })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId])
+
+  const isSelf = !!currentAdminId && currentAdminId === userId
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      const res: any = await adminAPI.updateUser(userId, formData)
+      setUser(res.data?.data?.user || null)
+      toast.success("User updated successfully")
+      setEditing(false)
+      onChanged()
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Update failed")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div className="bg-card border border-border rounded-lg max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+        {loading || !user ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <>
+            <div className="flex items-start justify-between gap-3 mb-5">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full bg-primary/10">
+                  {user.profile_image ? (
+                    <Image src={user.profile_image} alt={user.name} width={48} height={48} className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-primary text-primary-foreground font-semibold">
+                      {user.name.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <h2 className="text-lg font-bold text-foreground truncate">{user.name}</h2>
+                  <p className="text-sm text-muted-foreground truncate">{user.email}</p>
+                </div>
+              </div>
+              <button type="button" onClick={onClose} className="p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition shrink-0">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 mb-5">
+              <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full capitalize ${roleBadgeClass(user.role)}`}>
+                {user.role.replace('-', ' ')}
+              </span>
+              {user.status === 'banned' ? (
+                <span className="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full bg-destructive/10 text-destructive">
+                  <XCircle className="mr-1 h-3 w-3" /> Banned
+                </span>
+              ) : (
+                <span className="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                  <CheckCircle2 className="mr-1 h-3 w-3" /> Active
+                </span>
+              )}
+            </div>
+
+            {!editing ? (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                  <DetailRow
+                    icon={<Phone className="h-3.5 w-3.5" />}
+                    label="Phone"
+                    value={user.phone || null}
+                    badge={user.phone ? (
+                      user.phone_verified ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                          <BadgeCheck className="h-3 w-3" /> Verified
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                          <ShieldAlert className="h-3 w-3" /> Not verified
+                        </span>
+                      )
+                    ) : undefined}
+                  />
+                  <DetailRow icon={<MapPin className="h-3.5 w-3.5" />} label="City" value={user.city || null} />
+                  <DetailRow icon={<IdCard className="h-3.5 w-3.5" />} label="NIC / Passport" value={user.nic || null} />
+                  <DetailRow
+                    icon={<Calendar className="h-3.5 w-3.5" />}
+                    label="Joined"
+                    value={user.created_at ? new Date(user.created_at).toLocaleDateString() : null}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground mt-3">
+                  Signed in via {user.provider === "google" ? "Google" : "email & password"}.
+                </p>
+
+                <div className="flex justify-end pt-5 mt-5 border-t border-border">
+                  <button
+                    type="button"
+                    onClick={() => setEditing(true)}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition"
+                  >
+                    <Pencil className="h-4 w-4" /> Edit name / email / role
+                  </button>
+                </div>
+              </>
+            ) : (
+              <form onSubmit={handleSave} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-2">Name</label>
+                  <input
+                    type="text"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-2">Email</label>
+                  <input
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-2">Role</label>
+                  <select
+                    value={formData.role}
+                    onChange={(e) => setFormData({ ...formData, role: e.target.value })}
+                    disabled={isSelf}
+                    className="w-full px-4 py-2 bg-background border border-input rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+                  >
+                    <option value="user">User</option>
+                    <option value="organizer">Organizer</option>
+                    <option value="scanner">Scanner</option>
+                    <option value="moderator">Moderator</option>
+                    <option value="support">Support</option>
+                    <option value="content-manager">Content Manager</option>
+                    <option value="event-manager">Event Manager</option>
+                    <option value="superadmin">Super Admin</option>
+                  </select>
+                  {isSelf && (
+                    <p className="text-xs text-muted-foreground mt-1">You can&apos;t change your own role.</p>
+                  )}
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditing(false)
+                      setFormData({ name: user.name || "", email: user.email || "", role: user.role })
+                    }}
+                    className="flex-1 px-4 py-2 bg-muted text-foreground rounded-lg hover:opacity-90 transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition disabled:opacity-50"
+                  >
+                    {saving ? "Saving..." : "Save"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function DetailRow({
+  icon,
+  label,
+  value,
+  badge,
+}: {
+  icon: React.ReactNode
+  label: string
+  value: string | null | undefined
+  badge?: React.ReactNode
+}) {
+  return (
+    <div className="flex items-start gap-2 text-muted-foreground">
+      <span className="mt-0.5">{icon}</span>
+      <div className="min-w-0">
+        <div className="text-[11px] uppercase tracking-wide">{label}</div>
+        <div className="text-foreground truncate">{value || "—"}</div>
+        {badge}
       </div>
     </div>
   )
