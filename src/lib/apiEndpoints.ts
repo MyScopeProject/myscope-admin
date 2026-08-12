@@ -368,6 +368,12 @@ export const adminAPI = {
 
   deleteShopProductPermanently: (id: string) =>
     api.delete(`/admin/shop-products/${id}/permanent`),
+
+  // Per-product convenience-fee override. Mirrors adminEventManage.setConvenienceFee
+  // — the toggle only affects NEW orders placed for this product; past orders
+  // keep whatever fee was snapshotted on them at checkout time.
+  setShopProductConvenienceFee: (id: string, enabled: boolean) =>
+    api.patch(`/admin/shop-products/${id}/convenience-fee`, { enabled }),
 };
 
 // Admin event management — superadmin override that reuses the organizer
