@@ -158,6 +158,15 @@ const labelFor = (key: string): string => {
     layout_image_url: "Layout image",
     trailer_url: "Trailer URL",
     sms_reminders: "SMS reminders",
+    // Ticket-tier fields (kind='ticket_type_update' payload).
+    name: "Name",
+    price: "Price (LKR)",
+    quantity_total: "Quantity",
+    per_order_limit: "Per-order limit",
+    sale_start: "Sale starts",
+    sale_end: "Sale ends",
+    is_active: "Active",
+    is_free_seating: "Free seating tier",
   }
   if (map[key]) return map[key]
   return key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())
@@ -353,7 +362,7 @@ function PendingEditsContent() {
                                 : kind === "ticket_type_create"
                                   ? `New tier: ${String(proposed.name ?? "(unnamed)")}`
                                   : kind === "ticket_type_update"
-                                    ? "Ticket tier update"
+                                    ? `Update tier: ${String(proposed.name ?? "(unnamed)")}`
                                     : `Delete tier${proposed.name ? `: ${String(proposed.name)}` : ""}`}
                         {" · submitted "}
                         {new Date(row.submitted_at).toLocaleString("en-US", {
@@ -444,23 +453,57 @@ function PendingEditsContent() {
                             ))}
                         </dl>
                       ) : kind === "ticket_type_update" ? (
-                        // Tier-update: payload is { id, ...changedFields }.
-                        // Pull the live tier from current event's ticket
-                        // types (admin already has it via the /pending-edits/:id
-                        // endpoint when expanded — we read it through a
-                        // separate fetch if needed; for now show proposed
-                        // changes only since the backend already strips
-                        // unchanged fields).
-                        <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-[max-content_1fr]">
-                          {Object.entries(proposed)
-                            .filter(([key]) => key !== "id")
-                            .map(([key, value]) => (
-                              <React.Fragment key={key}>
-                                <dt className="font-medium text-muted-foreground">{labelFor(key)}</dt>
-                                <dd className="text-foreground">{formatValue(value)}</dd>
-                              </React.Fragment>
-                            ))}
-                        </dl>
+                        // Tier-update: payload is
+                        // { id, name, fields: { key: { from, to } } } —
+                        // each changed field carries BOTH the live value and
+                        // the proposed one (migration
+                        // 2026-08-13-pending-edits-per-ticket-type.sql), so
+                        // this renders a real before/after diff instead of
+                        // just the new value. `name` is always present even
+                        // when unchanged, so the admin knows which tier this
+                        // proposal is about (e.g. a pure price edit).
+                        (() => {
+                          const tierFields = (proposed.fields && typeof proposed.fields === "object"
+                            ? proposed.fields
+                            : {}) as Record<string, { from: unknown; to: unknown }>
+                          const entries = Object.entries(tierFields)
+                          return (
+                            <div>
+                              <p className="mb-2 text-sm font-medium text-foreground">
+                                Tier: {String(proposed.name ?? "—")}
+                              </p>
+                              {entries.length === 0 ? (
+                                <p className="text-sm text-muted-foreground">No field-level changes recorded.</p>
+                              ) : (
+                                <div className="overflow-x-auto">
+                                  <table className="w-full text-sm">
+                                    <thead className="text-left text-xs uppercase tracking-wider text-muted-foreground">
+                                      <tr>
+                                        <th className="pb-2 pr-4 font-medium">Field</th>
+                                        <th className="pb-2 pr-4 font-medium">Current (live)</th>
+                                        <th className="pb-2 font-medium">Proposed</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {entries.map(([key, diff]) => (
+                                        <tr key={key} className="border-t border-border align-top">
+                                          <td className="py-2 pr-4 font-medium text-foreground">{labelFor(key)}</td>
+                                          <td className="py-2 pr-4 text-muted-foreground">{formatValue(diff?.from)}</td>
+                                          <td className="py-2 text-foreground">
+                                            <span className="inline-flex items-center gap-1.5">
+                                              <ArrowRight className="h-3 w-3 text-primary" />
+                                              {formatValue(diff?.to)}
+                                            </span>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })()
                       ) : (
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
