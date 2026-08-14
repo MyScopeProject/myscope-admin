@@ -9,7 +9,12 @@
 import { useEffect, useState } from "react"
 import { AlertCircle, Loader, Mail, MessageSquare } from "lucide-react"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+// NEXT_PUBLIC_API_URL is configured with a trailing /api (matching lib/api.ts's
+// axios baseURL) — strip it here since this component builds its own
+// /api/... path below. Without this, production doubles up to /api/api/...
+// and every request 404s with the generic Express "Route not found" — this
+// bit us for real, see the 2026-08-14 fix.
+const API_URL = process.env.NEXT_PUBLIC_API_URL?.replace(/\/api\/?$/, "") || "http://localhost:5000"
 
 interface TypeCount {
   type: string

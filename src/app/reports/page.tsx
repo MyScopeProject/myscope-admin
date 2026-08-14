@@ -45,7 +45,10 @@ interface ReportData {
   by_event: EventRow[]
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+// NEXT_PUBLIC_API_URL is configured with a trailing /api (matching lib/api.ts's
+// axios baseURL) — strip it here since this file builds its own /api/... path
+// below. Without this, production doubles up to /api/api/... and 404s.
+const API_URL = process.env.NEXT_PUBLIC_API_URL?.replace(/\/api\/?$/, "") || "http://localhost:5000"
 
 // Pre-fill the inputs with the last 30-day window
 const today = new Date()
