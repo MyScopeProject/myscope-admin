@@ -20,6 +20,7 @@ import {
   Landmark,
   IdCard,
   Loader,
+  Percent,
   Search,
   ShieldOff,
   Trash2,
@@ -51,6 +52,9 @@ interface OrganizerProfile {
   rejection_reason: string | null
   verified_at: string | null
   created_at: string
+  // Admin-controlled override for the PAYOUT platform-fee percentage this
+  // organizer is charged (fraction, e.g. 0.03 = 3%). null = platform default.
+  platform_fee_pct: number | null
   users?: {
     id: string
     name: string
@@ -444,6 +448,10 @@ export default function OrganizersPage() {
               busy={pendingActionId === viewingFor.id}
               onClose={() => setViewingFor(null)}
               onClearBank={() => setClearingBankFor(viewingFor)}
+              onFeePctChanged={(pct) => {
+                setViewingFor((v) => (v ? { ...v, platform_fee_pct: pct } : v))
+                setProfiles((prev) => prev.map((p) => (p.id === viewingFor.id ? { ...p, platform_fee_pct: pct } : p)))
+              }}
             />
           )}
         </div>
@@ -500,17 +508,53 @@ function OrganizerDetailsModal({
   busy,
   onClose,
   onClearBank,
+  onFeePctChanged,
 }: {
   profile: OrganizerProfile
   busy: boolean
   onClose: () => void
   onClearBank: () => void
+  onFeePctChanged: (pct: number | null) => void
 }) {
   const u = profile.users
   const hasBankDetails = !!(
     profile.bank_name || profile.bank_account_number || profile.bank_account_name ||
     profile.branch_name || profile.bank_code || profile.branch_code
   )
+
+  // Per-organizer PAYOUT platform-fee percentage override — the cut MyScope
+  // keeps from this organizer's gross before paying them out. Blank = use
+  // the platform-wide default. Input holds the display value in PERCENT
+  // (e.g. "3"), converted to a fraction (0.03) at save time.
+  const [feePctInput, setFeePctInput] = useState(
+    profile.platform_fee_pct != null ? String(profile.platform_fee_pct * 100) : "",
+  )
+  const [savingFeePct, setSavingFeePct] = useState(false)
+  const saveFeePct = async () => {
+    const trimmed = feePctInput.trim()
+    let pct: number | null
+    if (trimmed === "") {
+      pct = null
+    } else {
+      const n = Number(trimmed)
+      if (!Number.isFinite(n) || n < 0 || n > 100) {
+        toast.error("Enter a percentage between 0 and 100, or leave blank for the platform default.")
+        return
+      }
+      pct = n / 100
+    }
+    setSavingFeePct(true)
+    try {
+      await adminAPI.setOrganizerPlatformFeePct(profile.id, pct)
+      toast.success(pct === null ? "Back to platform default fee." : `Platform fee set to ${pct * 100}%.`)
+      onFeePctChanged(pct)
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || "Failed to update platform fee.")
+    } finally {
+      setSavingFeePct(false)
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
       <div className="bg-card border border-border rounded-lg max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
@@ -542,8 +586,36 @@ function OrganizerDetailsModal({
           </button>
         </div>
 
-        <div className="mb-5">
+        <div className="mb-5 flex flex-wrap items-center gap-3">
           <StatusBadge status={profile.verification_status} />
+          <div
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm"
+            title="Custom payout platform-fee percentage for this organizer. Leave blank to use the platform default."
+          >
+            <Percent className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-xs text-muted-foreground">Platform fee</span>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step="0.01"
+              inputMode="decimal"
+              value={feePctInput}
+              onChange={(e) => setFeePctInput(e.target.value)}
+              placeholder="default"
+              disabled={savingFeePct}
+              className="w-14 bg-transparent text-sm focus:outline-none disabled:opacity-50"
+            />
+            <span className="text-muted-foreground">%</span>
+            <button
+              type="button"
+              onClick={saveFeePct}
+              disabled={savingFeePct}
+              className="ml-1 text-xs font-semibold text-primary hover:underline disabled:opacity-50"
+            >
+              {savingFeePct ? "Saving…" : "Set"}
+            </button>
+          </div>
         </div>
 
         {/* Details grid */}

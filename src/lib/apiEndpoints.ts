@@ -293,6 +293,12 @@ export const adminAPI = {
   // serve this. Reason required (>=10 chars) for the audit log.
   clearOrganizerBank: (id: string, reason: string) =>
     api.post(`/admin/organizers/${id}/clear-bank`, { reason }),
+  // Per-organizer PAYOUT platform-fee percentage override — the cut MyScope
+  // keeps from this organizer's gross before paying them out. `pct` is a
+  // fraction (0.03 = 3%); pass null to clear the override and fall back to
+  // the platform-wide default.
+  setOrganizerPlatformFeePct: (id: string, pct: number | null) =>
+    api.patch(`/admin/organizers/${id}/platform-fee-pct`, { pct }),
 
   // Refunds (Step 12)
   refundBooking: (booking_id: string, reason: string) =>
