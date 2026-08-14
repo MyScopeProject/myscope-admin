@@ -14,7 +14,7 @@ import { EventCommBillingCard } from "@/components/events/event-comm-billing-car
 import toast from "react-hot-toast"
 import {
   AlertCircle, ArrowLeft, BarChart2, Bell, Calendar, CalendarClock, CheckCircle, CheckCircle2,
-  ClipboardList, Copy, CreditCard, Edit3, ImageIcon, Loader, Mail, MapPin, Megaphone, Minus, Pause, Play, Plus, QrCode,
+  ClipboardList, Copy, CreditCard, Edit3, ImageIcon, Loader, Mail, MapPin, Megaphone, Minus, Pause, Percent, Play, Plus, QrCode,
   RefreshCw, RotateCcw, Send, Tag, Ticket as TicketIcon, Trash2, TrendingUp, Users,
   Wallet, WalletMinimal, X, XCircle,
 } from "lucide-react"
@@ -116,6 +116,43 @@ export default function ManageEventPage() {
       toast.error(e?.response?.data?.message || "Failed.")
     } finally {
       setBusy(false)
+    }
+  }
+
+  // Per-event convenience-fee PERCENTAGE override, on top of the on/off
+  // toggle above. Input holds the display value in PERCENT (e.g. "3.5"),
+  // converted to a fraction (0.035) at save time. Blank input = clear the
+  // override, falling back to the platform-wide default.
+  const [feePctInput, setFeePctInput] = useState("")
+  const [savingFeePct, setSavingFeePct] = useState(false)
+  useEffect(() => {
+    setFeePctInput(
+      event?.convenience_fee_pct != null ? String(Number(event.convenience_fee_pct) * 100) : "",
+    )
+  }, [event?.convenience_fee_pct])
+
+  const saveFeePct = async () => {
+    const trimmed = feePctInput.trim()
+    let pct: number | null
+    if (trimmed === "") {
+      pct = null
+    } else {
+      const n = Number(trimmed)
+      if (!Number.isFinite(n) || n < 0 || n > 100) {
+        toast.error("Enter a percentage between 0 and 100, or leave blank for the platform default.")
+        return
+      }
+      pct = n / 100
+    }
+    setSavingFeePct(true)
+    try {
+      await adminEventManage.setConvenienceFeePct(id, pct)
+      toast.success(pct === null ? "Back to platform default fee." : `Fee set to ${pct * 100}%.`)
+      loadEvent()
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || "Failed.")
+    } finally {
+      setSavingFeePct(false)
     }
   }
 
@@ -251,6 +288,35 @@ export default function ManageEventPage() {
                     <WalletMinimal className="w-4 h-4" /> Disable conv. fee
                   </button>
                 )}
+                {/* Per-event fee PERCENTAGE override — on top of the on/off
+                    toggle above. Blank = platform default. */}
+                <div
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm"
+                  title="Custom convenience-fee percentage for this event. Leave blank to use the platform default."
+                >
+                  <Percent className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step="0.01"
+                    inputMode="decimal"
+                    value={feePctInput}
+                    onChange={(e) => setFeePctInput(e.target.value)}
+                    placeholder="default"
+                    disabled={savingFeePct}
+                    className="w-16 bg-transparent text-sm focus:outline-none disabled:opacity-50"
+                  />
+                  <span className="text-muted-foreground">%</span>
+                  <button
+                    type="button"
+                    onClick={saveFeePct}
+                    disabled={savingFeePct}
+                    className="ml-1 text-xs font-semibold text-primary hover:underline disabled:opacity-50"
+                  >
+                    {savingFeePct ? "Saving…" : "Set"}
+                  </button>
+                </div>
                 {/* Per-event Koko toggle, same shape as the conv. fee toggle
                     above — on top of the global Koko feature flag. */}
                 {event.koko_enabled === false ? (

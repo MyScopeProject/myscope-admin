@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
+  Eye,
   Mail,
   Phone,
   Landmark,
@@ -23,6 +24,7 @@ import {
   ShieldOff,
   Trash2,
   User,
+  X,
 } from "lucide-react"
 
 type Status = "pending" | "approved" | "rejected"
@@ -83,6 +85,7 @@ export default function OrganizersPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [pendingActionId, setPendingActionId] = useState<string | null>(null)
+  const [viewingFor, setViewingFor] = useState<OrganizerProfile | null>(null)
   const [rejectingFor, setRejectingFor] = useState<OrganizerProfile | null>(null)
   const [revokingFor, setRevokingFor] = useState<OrganizerProfile | null>(null)
   const [deletingFor, setDeletingFor] = useState<OrganizerProfile | null>(null)
@@ -314,22 +317,134 @@ export default function OrganizersPage() {
               }
             />
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {filteredProfiles.map((p) => (
-                <ProfileCard
-                  key={p.id}
-                  profile={p}
-                  busy={pendingActionId === p.id}
-                  showActions={tab === "pending"}
-                  showRevoke={tab === "approved"}
-                  onApprove={() => handleApprove(p)}
-                  onReject={() => setRejectingFor(p)}
-                  onRevoke={() => handleOpenRevoke(p)}
-                  onDelete={() => setDeletingFor(p)}
-                  onClearBank={() => setClearingBankFor(p)}
-                />
-              ))}
+            <div className="bg-card border border-border rounded-lg overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-muted/50 border-b border-border">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        Organizer
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        Type
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        Status
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        Applied
+                      </th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {filteredProfiles.map((p) => {
+                      const u = p.users
+                      const busy = pendingActionId === p.id
+                      return (
+                        <tr key={p.id} className="hover:bg-muted/30 transition-colors">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center gap-3">
+                              {p.profile_image_url || u?.profile_image ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={(p.profile_image_url || u?.profile_image) as string}
+                                  alt={p.business_name}
+                                  className="h-10 w-10 shrink-0 rounded-full object-cover border border-border bg-muted"
+                                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none" }}
+                                />
+                              ) : (
+                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-primary to-secondary text-primary-foreground font-semibold text-sm">
+                                  {(u?.name || p.business_name).charAt(0).toUpperCase()}
+                                </div>
+                              )}
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium text-foreground truncate">
+                                  {p.business_name}
+                                </div>
+                                <div className="flex items-center gap-1 truncate text-sm text-muted-foreground">
+                                  <Mail className="h-3 w-3 shrink-0" />
+                                  <span className="truncate">{u?.email || "—"}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-muted-foreground capitalize">
+                            {p.business_type || "—"}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <StatusBadge status={p.verification_status} />
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-muted-foreground">
+                            {new Date(p.created_at).toLocaleDateString()}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                            <div className="flex items-center justify-end gap-1">
+                              <button
+                                onClick={() => setViewingFor(p)}
+                                className="p-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition"
+                                title="View details"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </button>
+                              {tab === "pending" && (
+                                <>
+                                  <button
+                                    onClick={() => handleApprove(p)}
+                                    disabled={busy}
+                                    className="p-2 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 rounded-md transition disabled:opacity-50"
+                                    title="Approve"
+                                  >
+                                    {busy ? <Loader className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                                  </button>
+                                  <button
+                                    onClick={() => setRejectingFor(p)}
+                                    disabled={busy}
+                                    className="p-2 text-destructive hover:bg-destructive/10 rounded-md transition disabled:opacity-50"
+                                    title="Reject"
+                                  >
+                                    <XCircle className="h-4 w-4" />
+                                  </button>
+                                </>
+                              )}
+                              {tab === "approved" && (
+                                <button
+                                  onClick={() => handleOpenRevoke(p)}
+                                  disabled={busy}
+                                  className="p-2 text-destructive hover:bg-destructive/10 rounded-md transition disabled:opacity-50"
+                                  title="Revoke organizer status"
+                                >
+                                  {busy ? <Loader className="h-4 w-4 animate-spin" /> : <ShieldOff className="h-4 w-4" />}
+                                </button>
+                              )}
+                              <button
+                                onClick={() => setDeletingFor(p)}
+                                disabled={busy}
+                                className="p-2 text-destructive hover:bg-destructive/10 rounded-md transition disabled:opacity-50"
+                                title="Delete organizer"
+                              >
+                                {busy ? <Loader className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
+          )}
+
+          {viewingFor && (
+            <OrganizerDetailsModal
+              profile={viewingFor}
+              busy={pendingActionId === viewingFor.id}
+              onClose={() => setViewingFor(null)}
+              onClearBank={() => setClearingBankFor(viewingFor)}
+            />
           )}
         </div>
 
@@ -378,25 +493,17 @@ export default function OrganizersPage() {
   )
 }
 
-function ProfileCard({
+// Full-detail modal opened via the row's "View details" action — bank,
+// witness, and rejection-reason fields that don't fit in the table row.
+function OrganizerDetailsModal({
   profile,
   busy,
-  showActions,
-  showRevoke,
-  onApprove,
-  onReject,
-  onRevoke,
-  onDelete,
+  onClose,
   onClearBank,
 }: {
   profile: OrganizerProfile
   busy: boolean
-  showActions: boolean
-  showRevoke: boolean
-  onApprove: () => void
-  onReject: () => void
-  onRevoke: () => void
-  onDelete: () => void
+  onClose: () => void
   onClearBank: () => void
 }) {
   const u = profile.users
@@ -405,156 +512,118 @@ function ProfileCard({
     profile.branch_name || profile.bank_code || profile.branch_code
   )
   return (
-    <div className="bg-card border border-border rounded-lg p-5 flex flex-col">
-      {/* Header row */}
-      <div className="flex items-start gap-3 mb-4">
-        {profile.profile_image_url || u?.profile_image ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={(profile.profile_image_url || u?.profile_image) as string}
-            alt={profile.business_name}
-            className="h-12 w-12 rounded-full object-cover shrink-0 border border-border bg-muted"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = "none" }}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div className="bg-card border border-border rounded-lg max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+        {/* Header row */}
+        <div className="flex items-start justify-between gap-3 mb-5">
+          <div className="flex items-center gap-3 min-w-0">
+            {profile.profile_image_url || u?.profile_image ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={(profile.profile_image_url || u?.profile_image) as string}
+                alt={profile.business_name}
+                className="h-12 w-12 rounded-full object-cover shrink-0 border border-border bg-muted"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = "none" }}
+              />
+            ) : (
+              <div className="h-12 w-12 rounded-full bg-linear-to-br from-primary to-secondary flex items-center justify-center text-primary-foreground font-semibold shrink-0">
+                {(u?.name || profile.business_name).charAt(0).toUpperCase()}
+              </div>
+            )}
+            <div className="min-w-0">
+              <h2 className="text-lg font-bold text-foreground truncate">{profile.business_name}</h2>
+              <p className="text-xs text-muted-foreground capitalize truncate">
+                {profile.business_type || "type not specified"}
+              </p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition shrink-0">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mb-5">
+          <StatusBadge status={profile.verification_status} />
+        </div>
+
+        {/* Details grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+          <DetailRow icon={<Mail className="h-3.5 w-3.5" />} label="Email" value={u?.email} />
+          <DetailRow icon={<IdCard className="h-3.5 w-3.5" />} label="NIC / BR" value={profile.nic_or_br} />
+          <DetailRow
+            icon={<Landmark className="h-3.5 w-3.5" />}
+            label="Bank"
+            value={
+              profile.bank_name && profile.bank_account_number
+                ? `${profile.bank_name} · ${profile.bank_account_number}`
+                : profile.bank_name || null
+            }
           />
-        ) : (
-          <div className="h-12 w-12 rounded-full bg-linear-to-br from-primary to-secondary flex items-center justify-center text-primary-foreground font-semibold shrink-0">
-            {(u?.name || profile.business_name).charAt(0).toUpperCase()}
+          <DetailRow
+            icon={<Landmark className="h-3.5 w-3.5" />}
+            label="Branch"
+            value={
+              [profile.branch_name, profile.branch_code && `(${profile.branch_code})`]
+                .filter(Boolean)
+                .join(" ") || null
+            }
+          />
+        </div>
+
+        {(profile.bank_account_name || profile.bank_code) && (
+          <div className="text-xs text-muted-foreground mt-2">
+            {profile.bank_account_name && <>Account holder: {profile.bank_account_name}</>}
+            {profile.bank_account_name && profile.bank_code && " · "}
+            {profile.bank_code && <>Bank code: {profile.bank_code}</>}
           </div>
         )}
-        <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-foreground truncate">{profile.business_name}</h3>
-          <p className="text-xs text-muted-foreground capitalize">
-            {profile.business_type || "type not specified"}
-          </p>
-        </div>
-        <StatusBadge status={profile.verification_status} />
-      </div>
 
-      {/* Details grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-        <DetailRow icon={<Mail className="h-3.5 w-3.5" />} label="Email" value={u?.email} />
-        <DetailRow icon={<IdCard className="h-3.5 w-3.5" />} label="NIC / BR" value={profile.nic_or_br} />
-        <DetailRow
-          icon={<Landmark className="h-3.5 w-3.5" />}
-          label="Bank"
-          value={
-            profile.bank_name && profile.bank_account_number
-              ? `${profile.bank_name} · ${profile.bank_account_number}`
-              : profile.bank_name || null
-          }
-        />
-        <DetailRow
-          icon={<Landmark className="h-3.5 w-3.5" />}
-          label="Branch"
-          value={
-            [profile.branch_name, profile.branch_code && `(${profile.branch_code})`]
-              .filter(Boolean)
-              .join(" ") || null
-          }
-        />
-      </div>
-
-      {(profile.bank_account_name || profile.bank_code) && (
-        <div className="text-xs text-muted-foreground mt-2">
-          {profile.bank_account_name && <>Account holder: {profile.bank_account_name}</>}
-          {profile.bank_account_name && profile.bank_code && " · "}
-          {profile.bank_code && <>Bank code: {profile.bank_code}</>}
-        </div>
-      )}
-
-      {/* Witness — collected in registration step 2. `phone` is the witness's
-          single mobile/WhatsApp number. */}
-      {(profile.witness_name ||
-        profile.witness_nic ||
-        profile.witness_email ||
-        profile.phone) && (
-        <div className="mt-3 pt-3 border-t border-border">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-            Witness
+        {/* Witness — collected in registration step 2. `phone` is the witness's
+            single mobile/WhatsApp number. */}
+        {(profile.witness_name ||
+          profile.witness_nic ||
+          profile.witness_email ||
+          profile.phone) && (
+          <div className="mt-3 pt-3 border-t border-border">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+              Witness
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              <DetailRow icon={<User className="h-3.5 w-3.5" />} label="Name" value={profile.witness_name} />
+              <DetailRow icon={<IdCard className="h-3.5 w-3.5" />} label="NIC" value={profile.witness_nic} />
+              <DetailRow icon={<Mail className="h-3.5 w-3.5" />} label="Email" value={profile.witness_email} />
+              <DetailRow icon={<Phone className="h-3.5 w-3.5" />} label="Mobile (WhatsApp)" value={profile.phone} />
+            </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-            <DetailRow icon={<User className="h-3.5 w-3.5" />} label="Name" value={profile.witness_name} />
-            <DetailRow icon={<IdCard className="h-3.5 w-3.5" />} label="NIC" value={profile.witness_nic} />
-            <DetailRow icon={<Mail className="h-3.5 w-3.5" />} label="Email" value={profile.witness_email} />
-            <DetailRow icon={<Phone className="h-3.5 w-3.5" />} label="Mobile (WhatsApp)" value={profile.phone} />
+        )}
+
+        {profile.rejection_reason && (
+          <div className="mt-3 p-3 rounded-md bg-destructive/10 border border-destructive/30 text-sm text-destructive">
+            <span className="font-semibold">Rejection reason: </span>
+            {profile.rejection_reason}
           </div>
+        )}
+
+        <div className="text-xs text-muted-foreground mt-3">
+          Applied {new Date(profile.created_at).toLocaleString()}
         </div>
-      )}
 
-      {profile.rejection_reason && (
-        <div className="mt-3 p-3 rounded-md bg-destructive/10 border border-destructive/30 text-sm text-destructive">
-          <span className="font-semibold">Rejection reason: </span>
-          {profile.rejection_reason}
-        </div>
-      )}
-
-      <div className="text-xs text-muted-foreground mt-3">
-        Applied {new Date(profile.created_at).toLocaleString()}
-      </div>
-
-      {showActions && (
-        <div className="flex items-center gap-2 mt-4 pt-4 border-t border-border">
-          <button
-            type="button"
-            onClick={onApprove}
-            disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition disabled:opacity-50"
-          >
-            {busy ? <Loader className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-            Approve
-          </button>
-          <button
-            type="button"
-            onClick={onReject}
-            disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-semibold bg-destructive/10 text-destructive hover:bg-destructive/20 transition disabled:opacity-50"
-          >
-            <XCircle className="h-4 w-4" />
-            Reject
-          </button>
-        </div>
-      )}
-
-      {showRevoke && (
-        <div className="flex items-center justify-end gap-2 mt-4 pt-4 border-t border-border">
-          <button
-            type="button"
-            onClick={onRevoke}
-            disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-semibold border border-destructive/30 text-destructive hover:bg-destructive/10 transition disabled:opacity-50"
-          >
-            {busy ? <Loader className="h-4 w-4 animate-spin" /> : <ShieldOff className="h-4 w-4" />}
-            Revoke organizer status
-          </button>
-        </div>
-      )}
-
-      {/* Delete — always available regardless of tab. Revoke is the
-          softer flow (keeps profile row, drops role); this is the
-          irreversible cleanup affordance. Clear bank details sits alongside
-          it — a lighter, admin-only housekeeping action (organizers can't
-          self-serve clearing their own bank info, only editing it). */}
-      <div className={`flex items-center justify-between mt-2 ${showActions || showRevoke ? "" : "pt-4 border-t border-border"}`}>
-        {hasBankDetails ? (
-          <button
-            type="button"
-            onClick={onClearBank}
-            disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition disabled:opacity-50"
-          >
-            {busy ? <Loader className="h-3.5 w-3.5 animate-spin" /> : <Landmark className="h-3.5 w-3.5" />}
-            Clear bank details
-          </button>
-        ) : <span />}
-        <button
-          type="button"
-          onClick={onDelete}
-          disabled={busy}
-          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition disabled:opacity-50"
-        >
-          {busy ? <Loader className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-          Delete organizer
-        </button>
+        {/* Clear bank details — a lighter, admin-only housekeeping action
+            (organizers can't self-serve clearing their own bank info, only
+            editing it). Approve/Reject/Revoke/Delete live on the row itself. */}
+        {hasBankDetails && (
+          <div className="flex justify-end pt-5 mt-5 border-t border-border">
+            <button
+              type="button"
+              onClick={onClearBank}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition disabled:opacity-50"
+            >
+              {busy ? <Loader className="h-3.5 w-3.5 animate-spin" /> : <Landmark className="h-3.5 w-3.5" />}
+              Clear bank details
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

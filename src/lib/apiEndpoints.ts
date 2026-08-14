@@ -406,6 +406,11 @@ export const adminEventManage = {
   // act as superadmin organizers on those paths). Default is ON.
   setConvenienceFee: (id: string, enabled: boolean) =>
     api.patch(`/admin/events/${id}/convenience-fee`, { enabled }),
+  // Per-event fee PERCENTAGE override, on top of the on/off toggle above.
+  // `pct` is a fraction (0.035 = 3.5%); pass null to clear the override and
+  // fall back to the platform-wide default.
+  setConvenienceFeePct: (id: string, pct: number | null) =>
+    api.patch(`/admin/events/${id}/convenience-fee-pct`, { pct }),
   // Koko BNPL toggle is admin-only, same shape as setConvenienceFee — on top
   // of the global Koko feature flag, both must allow it for a buyer to see
   // Koko on this event. Default is ON.
