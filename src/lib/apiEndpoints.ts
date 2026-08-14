@@ -374,6 +374,11 @@ export const adminAPI = {
   // keep whatever fee was snapshotted on them at checkout time.
   setShopProductConvenienceFee: (id: string, enabled: boolean) =>
     api.patch(`/admin/shop-products/${id}/convenience-fee`, { enabled }),
+
+  // Per-product Koko BNPL override, on top of the global Koko feature flag.
+  // Mirrors adminEventManage.setKoko.
+  setShopProductKoko: (id: string, enabled: boolean) =>
+    api.patch(`/admin/shop-products/${id}/koko`, { enabled }),
 };
 
 // Admin event management — superadmin override that reuses the organizer
@@ -401,6 +406,11 @@ export const adminEventManage = {
   // act as superadmin organizers on those paths). Default is ON.
   setConvenienceFee: (id: string, enabled: boolean) =>
     api.patch(`/admin/events/${id}/convenience-fee`, { enabled }),
+  // Koko BNPL toggle is admin-only, same shape as setConvenienceFee — on top
+  // of the global Koko feature flag, both must allow it for a buyer to see
+  // Koko on this event. Default is ON.
+  setKoko: (id: string, enabled: boolean) =>
+    api.patch(`/admin/events/${id}/koko`, { enabled }),
   cancel: (id: string, reason?: string) =>
     api.post(`/organizer/events/${id}/cancel`, reason ? { reason } : {}),
   postpone: (

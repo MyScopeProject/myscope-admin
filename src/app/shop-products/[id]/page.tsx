@@ -15,7 +15,7 @@ import { PageLoader } from "@/components/ui/loading"
 import { adminAPI } from "@/lib/apiEndpoints"
 import toast from "react-hot-toast"
 import {
-  AlertCircle, AlertTriangle, ArrowLeft, Archive, CheckCircle, Clock, ExternalLink, ImageIcon,
+  AlertCircle, AlertTriangle, ArrowLeft, Archive, CheckCircle, Clock, CreditCard, ExternalLink, ImageIcon,
   Loader2, Mail, MapPin, Package, RotateCcw, Tag, Trash2, Truck, User, Wallet, WalletMinimal, XCircle,
 } from "lucide-react"
 
@@ -39,6 +39,9 @@ interface AdminProduct {
   // Admin-controlled toggle for the 2% customer-paid convenience fee.
   // Default true (fee ON), same as events. Absent on pre-migration rows.
   convenience_fee_enabled?: boolean
+  // Admin-controlled toggle for the Koko BNPL payment option, on top of the
+  // global Koko feature flag. Default true. Absent on pre-migration rows.
+  koko_enabled?: boolean
   rejection_reason: string | null
   submitted_at: string | null
   reviewed_at: string | null
@@ -174,6 +177,24 @@ export default function AdminShopProductDetailPage() {
       load()
     } catch (err: any) {
       toast.error(err?.response?.data?.message || "Failed to update convenience fee")
+    } finally {
+      setActing(false)
+    }
+  }
+
+  // Per-product Koko (BNPL) override — on top of the global Koko feature
+  // flag. Only affects NEW orders placed for this product from now on — see
+  // PATCH /admin/shop-products/:id/koko.
+  const toggleKoko = async () => {
+    if (!product) return
+    const nextEnabled = product.koko_enabled === false
+    setActing(true)
+    try {
+      await adminAPI.setShopProductKoko(product.id, nextEnabled)
+      toast.success(nextEnabled ? "Koko payment enabled." : "Koko payment disabled.")
+      load()
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || "Failed to update Koko")
     } finally {
       setActing(false)
     }
@@ -391,6 +412,29 @@ export default function AdminShopProductDetailPage() {
                     className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-medium transition hover:bg-muted disabled:opacity-60"
                   >
                     <WalletMinimal className="h-4 w-4" /> Disable conv. fee
+                  </button>
+                )}
+                {/* Per-product Koko toggle, same shape as the conv. fee
+                    toggle above — on top of the global Koko feature flag. */}
+                {product.koko_enabled === false ? (
+                  <button
+                    type="button"
+                    onClick={toggleKoko}
+                    disabled={acting}
+                    title="Koko payment is OFF for this product. Click to enable."
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-sm font-medium text-amber-600 dark:text-amber-400 transition hover:bg-amber-500/15 disabled:opacity-60"
+                  >
+                    <CreditCard className="h-4 w-4" /> Enable Koko
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={toggleKoko}
+                    disabled={acting}
+                    title="Koko payment is ON for this product (subject to the global Koko switch). Click to disable."
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-medium transition hover:bg-muted disabled:opacity-60"
+                  >
+                    <CreditCard className="h-4 w-4" /> Disable Koko
                   </button>
                 )}
                 {product.status !== "archived" ? (

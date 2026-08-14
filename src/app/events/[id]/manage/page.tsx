@@ -14,7 +14,7 @@ import { EventCommBillingCard } from "@/components/events/event-comm-billing-car
 import toast from "react-hot-toast"
 import {
   AlertCircle, ArrowLeft, BarChart2, Bell, Calendar, CalendarClock, CheckCircle, CheckCircle2,
-  ClipboardList, Copy, Edit3, ImageIcon, Loader, Mail, MapPin, Megaphone, Minus, Pause, Play, Plus, QrCode,
+  ClipboardList, Copy, CreditCard, Edit3, ImageIcon, Loader, Mail, MapPin, Megaphone, Minus, Pause, Play, Plus, QrCode,
   RefreshCw, RotateCcw, Send, Tag, Ticket as TicketIcon, Trash2, TrendingUp, Users,
   Wallet, WalletMinimal, X, XCircle,
 } from "lucide-react"
@@ -111,6 +111,23 @@ export default function ManageEventPage() {
     try {
       await adminEventManage.setConvenienceFee(id, nextEnabled)
       toast.success(nextEnabled ? "Convenience fee enabled." : "Convenience fee disabled.")
+      loadEvent()
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || "Failed.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Per-event Koko (BNPL) override — on top of the global Koko feature flag.
+  // The toggle only affects NEW payment attempts; a Koko payment already in
+  // flight when this is disabled is unaffected.
+  const toggleKoko = async () => {
+    const nextEnabled = event?.koko_enabled === false
+    setBusy(true)
+    try {
+      await adminEventManage.setKoko(id, nextEnabled)
+      toast.success(nextEnabled ? "Koko payment enabled." : "Koko payment disabled.")
       loadEvent()
     } catch (e: any) {
       toast.error(e?.response?.data?.message || "Failed.")
@@ -232,6 +249,29 @@ export default function ManageEventPage() {
                     className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50"
                   >
                     <WalletMinimal className="w-4 h-4" /> Disable conv. fee
+                  </button>
+                )}
+                {/* Per-event Koko toggle, same shape as the conv. fee toggle
+                    above — on top of the global Koko feature flag. */}
+                {event.koko_enabled === false ? (
+                  <button
+                    type="button"
+                    onClick={toggleKoko}
+                    disabled={busy}
+                    title="Koko payment is OFF for this event. Click to enable."
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-400 hover:bg-amber-500/15 disabled:opacity-50"
+                  >
+                    <CreditCard className="w-4 h-4" /> Enable Koko
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={toggleKoko}
+                    disabled={busy}
+                    title="Koko payment is ON for this event (subject to the global Koko switch). Click to disable."
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50"
+                  >
+                    <CreditCard className="w-4 h-4" /> Disable Koko
                   </button>
                 )}
                 {event.postponed ? (
