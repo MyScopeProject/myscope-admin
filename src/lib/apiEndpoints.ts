@@ -16,6 +16,9 @@ export const adminAPI = {
   getUsers: (params?: { page?: number; limit?: number; search?: string; role?: string; status?: string }) => 
     api.get('/admin/users', { params }),
   getUserById: (id: string) => api.get(`/admin/users/${id}`),
+  // Full profile view — event bookings + shop orders. Heavier than
+  // getUserById, used only by the dedicated /users/:id detail page.
+  getUserActivity: (id: string) => api.get(`/admin/users/${id}/activity`),
   createUser: (data: any) => api.post('/admin/users', data),
   updateUser: (id: string, data: any) => api.put(`/admin/users/${id}`, data),
   banUser: (id: string) => api.put(`/admin/users/${id}/ban`),
