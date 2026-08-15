@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute"
 import { AdminLayout } from "@/components/layout/AdminLayout"
 import { useAuth } from "@/contexts/auth-context"
@@ -12,6 +12,7 @@ import {
   Banknote,
   ExternalLink,
   RotateCcw,
+  Search,
   Ticket,
   X,
 } from "lucide-react"
@@ -64,6 +65,22 @@ export default function RefundsPage() {
   const [rows, setRows] = useState<PendingRefund[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // Search + provider filter — client-side only. The pending-refund queue
+  // is small by nature (bounded to whatever's currently unresolved), so
+  // there's no need for a server-side search endpoint.
+  const [search, setSearch] = useState("")
+  const [providerFilter, setProviderFilter] = useState<"all" | "mpgs" | "koko">("all")
+
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return rows.filter((r) => {
+      if (providerFilter !== "all" && r.provider !== providerFilter) return false
+      if (!q) return true
+      return [r.booking_reference, r.event_title, r.buyer_name, r.buyer_email, r.buyer_phone, r.gateway_reference]
+        .some((f) => (f || "").toLowerCase().includes(q))
+    })
+  }, [rows, search, providerFilter])
 
   // Action modal — shared by both the MPGS (gateway call) and Koko (manual
   // record) paths, distinguished by `target.provider`.
@@ -123,11 +140,43 @@ export default function RefundsPage() {
     <ProtectedRoute>
       <AdminLayout user={user ?? undefined}>
         <div className="p-6 space-y-6">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Refunds</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Bookings queued for a refund — from buyer requests, organizer/admin actions, or event cancellations.
-            </p>
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight">Refunds</h1>
+              <p className="text-sm text-muted-foreground mt-1">
+                Bookings queued for a refund — from buyer requests, organizer/admin actions, or event cancellations.
+              </p>
+            </div>
+            {!loading && !error && rows.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search booking, buyer, event…"
+                    className="h-9 w-64 rounded-lg border border-input bg-background pl-8 pr-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  />
+                </div>
+                <div className="flex gap-1 rounded-lg border border-border p-0.5">
+                  {(["all", "mpgs", "koko"] as const).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setProviderFilter(p)}
+                      className={`rounded-md px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
+                        providerFilter === p
+                          ? "bg-primary/10 text-primary"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {loading ? (
@@ -145,6 +194,12 @@ export default function RefundsPage() {
               description="Refund requests from buyers, organizers, or event cancellations show up here."
               icon={RotateCcw}
             />
+          ) : filteredRows.length === 0 ? (
+            <EmptyState
+              title="No matching refunds"
+              description="Try a different search term or provider filter."
+              icon={Search}
+            />
           ) : (
             <div className="rounded-xl border border-border overflow-x-auto bg-card">
               <table className="w-full text-sm">
@@ -156,7 +211,7 @@ export default function RefundsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map(r => (
+                  {filteredRows.map(r => (
                     <tr key={r.payment_id} className="border-t border-border hover:bg-muted/20">
                       <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
                         {new Date(r.requested_at).toLocaleDateString()}
