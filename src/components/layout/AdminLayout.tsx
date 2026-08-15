@@ -29,6 +29,7 @@ import {
   Handshake,
   Package,
   ShoppingBag,
+  RotateCcw,
 } from "lucide-react"
 import { ThemeToggle } from "../ui/theme-toggle"
 
@@ -52,6 +53,7 @@ const allNavItems: NavItem[] = [
   { name: "Shop Products", href: "/shop-products", icon: Package },
   { name: "Shop Orders", href: "/shop-orders", icon: ShoppingBag },
   { name: "Payouts", href: "/payouts", icon: Banknote },
+  { name: "Refunds", href: "/refunds", icon: RotateCcw },
   { name: "Earnings", href: "/earnings", icon: Coins },
   { name: "Finance Reports", href: "/reports", icon: BarChart3 },
   { name: "Reserved Seating Events", href: "/reserved-seating-events", icon: LayoutGrid },

@@ -103,6 +103,9 @@ export const ROUTE_ACCESS: Record<string, UserRole[]> = {
 
   // Step 12: payouts & finance — superadmin and event-manager
   '/payouts': ['superadmin', 'event-manager'],
+  // Money-moving refund execution (MPGS API call, or manual Koko-portal
+  // confirmation) — same access list as payouts.
+  '/refunds': ['superadmin', 'event-manager'],
   '/reports': ['superadmin'],
 
   // Per-event earnings dashboard — admin-only money view (revenue,

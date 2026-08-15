@@ -303,6 +303,14 @@ export const adminAPI = {
   // Refunds (Step 12)
   refundBooking: (booking_id: string, reason: string) =>
     api.post('/admin/refunds', { booking_id, reason }),
+  // Every payment still sitting at refund_status='Pending' — queued by buyer
+  // self-serve requests, organizer/admin per-booking buttons, or event
+  // cancellation, enriched with booking/event/buyer context.
+  getPendingRefunds: () => api.get('/admin/refunds/pending'),
+  // Koko has no refund API — this records a refund staff already processed
+  // manually through Koko's merchant portal (no gateway call happens).
+  refundBookingKokoManual: (booking_id: string, reason: string) =>
+    api.post('/admin/refunds/koko-manual', { booking_id, reason }),
 
   // Payouts (Step 12)
   getPayouts: (status?: 'requested' | 'approved' | 'paid' | 'rejected') =>
