@@ -87,6 +87,11 @@ export default function RefundsPage() {
   const [target, setTarget] = useState<PendingRefund | null>(null)
   const [reason, setReason] = useState("")
   const [submitting, setSubmitting] = useState(false)
+  // MPGS rows default to the automatic (gateway-calling) path. Staff flip
+  // this when they've already refunded the card directly in Seylan's own
+  // dashboard — same shape as Koko's always-manual path, just opt-in here
+  // since the automatic path should stay the default for MPGS.
+  const [manualMode, setManualMode] = useState(false)
 
   const load = async () => {
     try {
@@ -106,12 +111,14 @@ export default function RefundsPage() {
   const openAction = (row: PendingRefund) => {
     setTarget(row)
     setReason(row.refund_reason || "")
+    setManualMode(false)
   }
 
   const closeAction = () => {
     if (submitting) return
     setTarget(null)
     setReason("")
+    setManualMode(false)
   }
 
   const submit = async () => {
@@ -122,12 +129,16 @@ export default function RefundsPage() {
       if (target.provider === "koko") {
         await adminAPI.refundBookingKokoManual(target.booking_id, reason.trim())
         toast.success("Refund recorded.")
+      } else if (manualMode) {
+        await adminAPI.refundBookingMpgsManual(target.booking_id, reason.trim())
+        toast.success("Refund recorded.")
       } else {
         await adminAPI.refundBooking(target.booking_id, reason.trim())
         toast.success("Refund processed via MPGS.")
       }
       setTarget(null)
       setReason("")
+      setManualMode(false)
       load()
     } catch (e: any) {
       toast.error(e?.response?.data?.message || "Refund failed.")
@@ -272,7 +283,11 @@ export default function RefundsPage() {
             >
               <div className="flex items-start justify-between gap-3">
                 <h2 className="text-lg font-semibold text-foreground">
-                  {target.provider === "koko" ? "Mark refunded via Koko" : "Process MPGS refund"}
+                  {target.provider === "koko"
+                    ? "Mark refunded via Koko"
+                    : manualMode
+                      ? "Record manual MPGS refund"
+                      : "Process MPGS refund"}
                 </h2>
                 <button type="button" onClick={closeAction} aria-label="Close" title="Close" className="rounded-md p-1 text-muted-foreground hover:bg-muted">
                   <X className="h-4 w-4" />
@@ -302,9 +317,32 @@ export default function RefundsPage() {
                     </div>
                   </div>
                 ) : (
-                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs text-muted-foreground">
-                    This calls MPGS's refund API directly — the buyer's card will actually be refunded when you confirm.
-                  </div>
+                  <>
+                    {manualMode ? (
+                      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+                        Use this only if you already refunded this card directly in Seylan's merchant dashboard
+                        (Order &amp; Transaction Search). This does <strong>not</strong> call MPGS — it only records the
+                        refund in MyScope, cancels the booking, releases inventory, and notifies the buyer. If you
+                        haven't refunded on Seylan's side yet, do that first — otherwise the buyer never gets their money.
+                        <div className="mt-2 font-mono text-[11px] text-amber-800 dark:text-amber-200">
+                          {target.gateway_reference || "(no order id on file)"}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs text-muted-foreground">
+                        This calls MPGS's refund API directly — the buyer's card will actually be refunded when you confirm.
+                      </div>
+                    )}
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={manualMode}
+                        onChange={(e) => setManualMode(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-input"
+                      />
+                      I already refunded this manually on Seylan's dashboard
+                    </label>
+                  </>
                 )}
 
                 <div>
@@ -335,7 +373,11 @@ export default function RefundsPage() {
                     className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
                   >
                     <Banknote className="h-4 w-4" />
-                    {submitting ? "Processing…" : target.provider === "koko" ? "Confirm refunded" : "Process refund"}
+                    {submitting
+                      ? "Processing…"
+                      : target.provider === "koko" || manualMode
+                        ? "Confirm refunded"
+                        : "Process refund"}
                   </button>
                 </div>
               </div>

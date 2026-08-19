@@ -314,6 +314,12 @@ export const adminAPI = {
   // manually through Koko's merchant portal (no gateway call happens).
   refundBookingKokoManual: (booking_id: string, reason: string) =>
     api.post('/admin/refunds/koko-manual', { booking_id, reason }),
+  // Escape hatch for an MPGS refund staff already processed directly in
+  // Seylan's merchant dashboard instead of via refundBooking() above — no
+  // gateway call happens here, this only catches up MyScope's own booking
+  // status / inventory / notifications.
+  refundBookingMpgsManual: (booking_id: string, reason: string) =>
+    api.post('/admin/refunds/mpgs-manual', { booking_id, reason }),
 
   // Payouts (Step 12)
   getPayouts: (status?: 'requested' | 'approved' | 'paid' | 'rejected') =>
