@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   Calendar,
   Eye,
+  EyeOff,
   Search,
   MapPin,
   DollarSign,
@@ -46,6 +47,7 @@ interface Event {
   banner_url?: string | null
   category?: string
   pinned?: boolean
+  delisted?: boolean
   created_at: string
 }
 
@@ -99,6 +101,19 @@ export default function EventsPage() {
     } catch (err: any) {
       setEvents((prev) => prev.map((e) => (e.id === event.id ? { ...e, pinned: !next } : e)))
       toast.error(err.response?.data?.message || "Failed to update pin")
+    }
+  }
+
+  const handleToggleDelist = async (event: Event) => {
+    const next = !event.delisted
+    // Optimistic update so the button flips instantly.
+    setEvents((prev) => prev.map((e) => (e.id === event.id ? { ...e, delisted: next } : e)))
+    try {
+      await adminAPI.setEventDelisted(event.id, next)
+      toast.success(next ? "Event hidden from public listings" : "Event visible in listings again")
+    } catch (err: any) {
+      setEvents((prev) => prev.map((e) => (e.id === event.id ? { ...e, delisted: !next } : e)))
+      toast.error(err.response?.data?.message || "Failed to update visibility")
     }
   }
 
@@ -258,6 +273,11 @@ export default function EventsPage() {
                           <Pin className="h-3 w-3" /> Pinned
                         </span>
                       )}
+                      {event.delisted && (
+                        <span className="absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded-full bg-slate-700 px-2 py-0.5 text-[10px] font-semibold text-white shadow">
+                          <EyeOff className="h-3 w-3" /> Hidden
+                        </span>
+                      )}
                       {event.banner_url ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
@@ -343,6 +363,19 @@ export default function EventsPage() {
                         >
                           {event.pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
                           {event.pinned ? 'Pinned — click to unpin' : 'Pin to top'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleDelist(event)}
+                          className={`w-full px-3 py-2 text-sm rounded-md transition flex items-center justify-center gap-1.5 font-medium ${
+                            event.delisted
+                              ? 'bg-slate-500/15 text-slate-600 dark:text-slate-300 hover:bg-slate-500/25'
+                              : 'bg-muted text-muted-foreground hover:bg-muted/70'
+                          }`}
+                          title={event.delisted ? 'Hidden from public listings — click to show' : 'Hide from public listings (direct link still works)'}
+                        >
+                          {event.delisted ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                          {event.delisted ? 'Hidden — click to show' : 'Hide from web'}
                         </button>
                         <Link
                           href={`/events/${event.id}`}

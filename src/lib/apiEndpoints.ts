@@ -46,6 +46,9 @@ export const adminAPI = {
   setEventPinned: (id: string, pinned: boolean) =>
     api.patch(`/admin/events/${id}/pinned`, { pinned }),
 
+  setEventDelisted: (id: string, delisted: boolean) =>
+    api.patch(`/admin/events/${id}/delisted`, { delisted }),
+
   // Pending-edits moderation queue. When an organizer edits an APPROVED
   // event, the change is queued here instead of going live. Admin reviews
   // the diff and either applies it to the live row or declines (with an
