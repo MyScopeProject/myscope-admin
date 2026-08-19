@@ -32,6 +32,8 @@ import {
   XCircle,
   AlertCircle,
   SlidersHorizontal,
+  Search,
+  Send,
 } from "lucide-react"
 
 interface TicketType {
@@ -464,6 +466,11 @@ export default function AdminEventDetailPage() {
                 )}
               </Section>
 
+              {/* Attendees — searchable list of confirmed bookings, mirroring
+                  the organizer's own Attendees tab so support staff don't
+                  need organizer-panel access to look someone up. */}
+              <AttendeesSection eventId={event.id} />
+
               {/* Per-event communications — counts of every email + SMS this
                   event has triggered, broken down by message type. Forward-only:
                   events that ran before this feature shipped show zeros. */}
@@ -740,6 +747,139 @@ export default function AdminEventDetailPage() {
         )}
       </AdminLayout>
     </ProtectedRoute>
+  )
+}
+
+interface BookingRow {
+  id: string
+  booking_reference: string
+  short_code: string | null
+  status: string
+  number_of_tickets: number
+  total_amount: number | string
+  attendee_info?: { name?: string; email?: string; phone?: string } | null
+  guest_email?: string | null
+  guest_name?: string | null
+  checked_in_at: string | null
+  checked_in_tickets?: number
+  is_invitation?: boolean
+}
+
+function AttendeesSection({ eventId }: { eventId: string }) {
+  const [bookings, setBookings] = useState<BookingRow[] | null>(null)
+  const [err, setErr] = useState("")
+  const [search, setSearch] = useState("")
+  const [busyId, setBusyId] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await adminAPI.getEventBookings(eventId)
+      setBookings((res.data?.data?.bookings ?? []) as BookingRow[])
+    } catch (e: any) {
+      setErr(e?.response?.data?.message || "Couldn't load attendees.")
+    }
+  }, [eventId])
+
+  useEffect(() => { load() }, [load])
+
+  const resend = async (b: BookingRow) => {
+    setBusyId(b.id)
+    try {
+      const res = await adminAPI.resendEventBooking(eventId, b.id)
+      toast.success(res.data?.message || "Resent.")
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || "Failed to resend.")
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  if (err) return <Section title="Attendees"><p className="text-sm text-destructive">{err}</p></Section>
+  if (!bookings) return <Section title="Attendees"><p className="text-sm text-muted-foreground">Loading…</p></Section>
+
+  const confirmedOnly = bookings.filter((b) => b.status === "Confirmed")
+  const q = search.trim().toLowerCase()
+  const filtered = q
+    ? confirmedOnly.filter((b) =>
+        b.attendee_info?.name?.toLowerCase().includes(q) ||
+        b.attendee_info?.email?.toLowerCase().includes(q) ||
+        b.guest_name?.toLowerCase().includes(q) ||
+        b.guest_email?.toLowerCase().includes(q) ||
+        b.booking_reference?.toLowerCase().includes(q) ||
+        b.short_code?.toLowerCase().includes(q),
+      )
+    : confirmedOnly
+
+  return (
+    <Section title={`Attendees (${confirmedOnly.length})`}>
+      {confirmedOnly.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No confirmed bookings yet.</p>
+      ) : (
+        <div className="space-y-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search by name, email, or booking ref…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full rounded-lg border border-input bg-background py-2 pl-10 pr-4 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          {filtered.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No attendees match &ldquo;{search}&rdquo;.</p>
+          ) : (
+            <div className="divide-y divide-border rounded-xl border border-border overflow-hidden">
+              {filtered.map((b) => {
+                const name = b.attendee_info?.name || b.guest_name || "—"
+                const email = b.attendee_info?.email || b.guest_email || "—"
+                const checkedTickets = b.checked_in_tickets ?? 0
+                const fullyIn = checkedTickets > 0 && checkedTickets >= b.number_of_tickets
+                return (
+                  <div key={b.id} className="flex flex-wrap items-center justify-between gap-3 bg-card px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium text-foreground">{name}</span>
+                        {fullyIn && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                            <CheckCircle className="h-3 w-3" /> Checked in
+                          </span>
+                        )}
+                        {!fullyIn && checkedTickets > 0 && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                            {checkedTickets}/{b.number_of_tickets} in
+                          </span>
+                        )}
+                        {b.is_invitation && (
+                          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-primary">
+                            Invited
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">
+                        {email} · {b.number_of_tickets} ticket{b.number_of_tickets === 1 ? "" : "s"} · {formatLkr(Number(b.total_amount))}
+                      </div>
+                      <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+                        {b.short_code || b.booking_reference}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => resend(b)}
+                      disabled={busyId === b.id}
+                      className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                    >
+                      {busyId === b.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                      Resend
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </Section>
   )
 }
 

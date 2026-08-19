@@ -38,6 +38,9 @@ export const adminAPI = {
   rejectEvent: (id: string, reason: string) =>
     api.post(`/admin/events/${id}/reject`, { reason }),
   getEventForReview: (id: string) => api.get(`/admin/events/${id}`),
+  getEventBookings: (id: string) => api.get(`/admin/events/${id}/bookings`),
+  resendEventBooking: (eventId: string, bookingId: string) =>
+    api.post(`/admin/events/${eventId}/bookings/${bookingId}/resend`),
   deleteEvent: (id: string, opts?: { force?: boolean }) =>
     api.delete(`/admin/events/${id}`, { params: opts?.force ? { force: 'true' } : undefined }),
   setEventFeatured: (id: string, featured: boolean) =>
