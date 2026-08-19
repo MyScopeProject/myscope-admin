@@ -315,14 +315,16 @@ export const adminAPI = {
   getPendingRefunds: () => api.get('/admin/refunds/pending'),
   // Koko has no refund API — this records a refund staff already processed
   // manually through Koko's merchant portal (no gateway call happens).
-  refundBookingKokoManual: (booking_id: string, reason: string) =>
-    api.post('/admin/refunds/koko-manual', { booking_id, reason }),
+  // `amount` is optional — pass it when the real-world refund was partial,
+  // so the payment record and the buyer's refund email/SMS aren't overstated.
+  refundBookingKokoManual: (booking_id: string, reason: string, amount?: number) =>
+    api.post('/admin/refunds/koko-manual', { booking_id, reason, amount }),
   // Escape hatch for an MPGS refund staff already processed directly in
   // Seylan's merchant dashboard instead of via refundBooking() above — no
   // gateway call happens here, this only catches up MyScope's own booking
-  // status / inventory / notifications.
-  refundBookingMpgsManual: (booking_id: string, reason: string) =>
-    api.post('/admin/refunds/mpgs-manual', { booking_id, reason }),
+  // status / inventory / notifications. `amount` is optional, same as above.
+  refundBookingMpgsManual: (booking_id: string, reason: string, amount?: number) =>
+    api.post('/admin/refunds/mpgs-manual', { booking_id, reason, amount }),
 
   // Payouts (Step 12)
   getPayouts: (status?: 'requested' | 'approved' | 'paid' | 'rejected') =>

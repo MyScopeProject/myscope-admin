@@ -92,6 +92,10 @@ export default function RefundsPage() {
   // dashboard — same shape as Koko's always-manual path, just opt-in here
   // since the automatic path should stay the default for MPGS.
   const [manualMode, setManualMode] = useState(false)
+  // Only meaningful in a manual path (Koko's, or MPGS's opt-in) — the
+  // automatic MPGS path always refunds the full payment via the gateway
+  // call itself, so there's nothing to type there.
+  const [amountText, setAmountText] = useState("")
 
   const load = async () => {
     try {
@@ -112,6 +116,7 @@ export default function RefundsPage() {
     setTarget(row)
     setReason(row.refund_reason || "")
     setManualMode(false)
+    setAmountText(String(row.amount))
   }
 
   const closeAction = () => {
@@ -119,18 +124,26 @@ export default function RefundsPage() {
     setTarget(null)
     setReason("")
     setManualMode(false)
+    setAmountText("")
   }
 
   const submit = async () => {
     if (!target) return
     if (!reason.trim()) { toast.error("Enter a reason."); return }
+    // Empty/invalid/full amount all fall back to a full refund server-side —
+    // only send a value when it's a genuine partial (less than the full
+    // amount), so a blank field never accidentally shrinks the recorded sum.
+    const parsedAmount = Number(amountText)
+    const partialAmount = Number.isFinite(parsedAmount) && parsedAmount > 0 && parsedAmount < Number(target.amount)
+      ? parsedAmount
+      : undefined
     setSubmitting(true)
     try {
       if (target.provider === "koko") {
-        await adminAPI.refundBookingKokoManual(target.booking_id, reason.trim())
+        await adminAPI.refundBookingKokoManual(target.booking_id, reason.trim(), partialAmount)
         toast.success("Refund recorded.")
       } else if (manualMode) {
-        await adminAPI.refundBookingMpgsManual(target.booking_id, reason.trim())
+        await adminAPI.refundBookingMpgsManual(target.booking_id, reason.trim(), partialAmount)
         toast.success("Refund recorded.")
       } else {
         await adminAPI.refundBooking(target.booking_id, reason.trim())
@@ -138,6 +151,7 @@ export default function RefundsPage() {
       }
       setTarget(null)
       setReason("")
+      setAmountText("")
       setManualMode(false)
       load()
     } catch (e: any) {
@@ -343,6 +357,28 @@ export default function RefundsPage() {
                       I already refunded this manually on Seylan's dashboard
                     </label>
                   </>
+                )}
+
+                {(target.provider === "koko" || manualMode) && (
+                  <div>
+                    <label htmlFor="refund-amount" className="mb-1.5 block text-sm font-medium text-foreground">
+                      Amount actually refunded
+                    </label>
+                    <input
+                      id="refund-amount"
+                      type="number"
+                      min={0}
+                      max={Number(target.amount)}
+                      step="0.01"
+                      value={amountText}
+                      onChange={(e) => setAmountText(e.target.value)}
+                      className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Defaults to the full {formatLkr(target.amount)}. Lower this if you only sent back part of it —
+                      the booking still gets fully cancelled either way, only the recorded/emailed amount changes.
+                    </p>
+                  </div>
                 )}
 
                 <div>
